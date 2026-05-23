@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIMKULIAH Auto-Absen Dashboard</title>
+  <meta name="description" content="Dashboard Mandiri Modul Absensi Otomatis SIMKULIAH USK">
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Icons via Lucide Icons (CDN) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="dark-theme">
+
+  <!-- ==================== TOAST NOTIFICATION CONTAINER ==================== -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ==================== LOGIN SCREEN ==================== -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo">
+          <i data-lucide="shield-check" class="logo-icon glow-cyan"></i>
+        </div>
+        <h1 class="font-outfit">Absensi SIMKULIAH</h1>
+        <p>Akses masuk ke panel kontrol mandiri</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <div class="form-group">
+          <label for="username"><i data-lucide="user"></i> Username</label>
+          <input type="text" id="username" placeholder="Masukkan username" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="password"><i data-lucide="lock"></i> Password</label>
+          <input type="password" id="password" placeholder="Masukkan password" required autocomplete="current-password">
+        </div>
+        <button type="submit" id="btn-login-submit" class="btn btn-primary font-outfit btn-block">
+          <span>Login ke Panel</span> <i data-lucide="log-in"></i>
+        </button>
+      </form>
+      <div class="login-footer">
+        <p>Default: <code>admin</code> / <code>admin</code></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MAIN DASHBOARD LAYOUT ==================== -->
+  <div id="app-layout" class="app-layout hidden">
+    
+    <!-- Sidebar Navigation -->
+    <aside id="app-sidebar" class="app-sidebar">
+      <div class="sidebar-brand">
+        <i data-lucide="rocket" class="brand-icon glow-red"></i>
+        <span class="brand-name font-outfit">SIMKULIAH</span>
+        <button id="btn-sidebar-close" class="btn-icon mobile-only">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      
+      <div class="sidebar-user">
+        <div class="user-avatar">
+          <i data-lucide="user-check"></i>
+        </div>
+        <div class="user-meta">
+          <span class="user-name" id="display-username">Admin</span>
+          <span class="user-role">Administrator</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#overview" class="nav-item active" id="nav-overview">
+          <i data-lucide="layout-dashboard"></i> <span>Ringkasan</span>
+        </a>
+        <a href="#accounts" class="nav-item" id="nav-accounts">
+          <i data-lucide="users"></i> <span>Akun Mahasiswa</span>
+        </a>
+        <a href="#logs" class="nav-item" id="nav-logs">
+          <i data-lucide="history"></i> <span>Riwayat Absen</span>
+        </a>
+        <a href="#health" class="nav-item" id="nav-health">
+          <i data-lucide="activity"></i> <span>Health Monitor</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="btn-logout" class="btn btn-danger btn-block font-outfit">
+          <i data-lucide="log-out"></i> <span>Keluar</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Content Area Wrapper -->
+    <div class="main-content-wrapper">
+      
+      <!-- Top Header -->
+      <header class="top-header">
+        <div class="header-left">
+          <button id="btn-sidebar-toggle" class="btn-icon">
+            <i data-lucide="menu"></i>
+          </button>
+          <h2 id="page-title" class="page-title font-outfit">Ringkasan</h2>
+        </div>
+        <div class="header-right">
+          <!-- Dark Mode Toggle (Visual Only as Theme is Dark by default, but nice for micro-interaction) -->
+          <button id="btn-theme-toggle" class="btn-icon" title="Toggle Theme">
+            <i data-lucide="sun"></i>
+          </button>
+          <div class="system-status-indicator" id="header-status-indicator">
+            <span class="status-dot green-dot"></span>
+            <span class="status-text font-outfit">Online</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Dynamic Content Body -->
+      <main class="content-body" id="content-body">
+        
+        <!-- ================= PAGE: OVERVIEW ================= -->
+        <section id="page-overview" class="page-section">
+          <!-- Welcome Bar & Action -->
+          <div class="welcome-bar">
+            <div class="welcome-text">
+              <h3 class="font-outfit">Selamat datang kembali!</h3>
+              <p>Pantau status absensi perkuliahan mahasiswa secara real-time.</p>
+            </div>
+            <button id="btn-run-all-absen" class="btn btn-red font-outfit">
+              <i data-lucide="zap"></i> Jalankan Semua Absensi
+            </button>
+          </div>
+
+          <!-- Stats Grid -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-blue-dim">
+                <i data-lucide="users" class="color-blue"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="stat-total-accounts">0</span>
+                <span class="stat-label">Total Akun Terdaftar</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-green-dim">
+                <i data-lucide="check-circle-2" class="color-green"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="stat-successful-logs">0</span>
+                <span class="stat-label">Absensi Berhasil (Hari Ini)</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-red-dim">
+                <i data-lucide="alert-triangle" class="color-red"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="stat-failed-logs">0</span>
+                <span class="stat-label">Absensi Gagal (Hari Ini)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Main Overview Split -->
+          <div class="overview-split">
+            <!-- Left Side: Recent Active Logs -->
+            <div class="panel flex-2">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="history"></i> Aktivitas Absensi Terbaru</h4>
+                <a href="#logs" class="btn-link">Lihat Semua</a>
+              </div>
+              <div class="table-container">
+                <table class="data-table" id="table-recent-logs">
+                  <thead>
+                    <tr>
+                      <th>Nama & NPM</th>
+                      <th>Mata Kuliah / Detail</th>
+                      <th>Waktu</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recent-logs-list">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Right Side: Health Summary -->
+            <div class="panel flex-1">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="activity"></i> Ringkasan Sistem</h4>
+              </div>
+              <div class="system-summary-list">
+                <div class="summary-item">
+                  <span class="item-label">Status Server</span>
+                  <span class="badge badge-success" id="summary-server-status">Healthy</span>
+                </div>
+                <div class="summary-item">
+                  <span class="item-label">Database Fallback</span>
+                  <span class="badge badge-outline-success" id="summary-db-fallback">Non-Active</span>
+                </div>
+                <div class="summary-item">
+                  <span class="item-label">Gemini API Key</span>
+                  <span class="badge badge-outline-success" id="summary-gemini-key">Terdeteksi</span>
+                </div>
+                <div class="summary-item">
+                  <span class="item-label">Playwright Browser</span>
+                  <span class="badge badge-success">OK</span>
+                </div>
+                <div class="summary-item">
+                  <span class="item-label">Server Uptime</span>
+                  <span class="item-value" id="summary-server-uptime">0s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PAGE: ACCOUNTS ================= -->
+        <section id="page-accounts" class="page-section hidden">
+          <div class="action-bar">
+            <h3 class="section-subtitle font-outfit">Kelola Akun SIMKULIAH</h3>
+            <button id="btn-add-account-modal" class="btn btn-primary font-outfit">
+              <i data-lucide="plus-circle"></i> Tambah Akun Baru
+            </button>
+          </div>
+
+          <div class="panel">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nama Lengkap</th>
+                    <th>NPM</th>
+                    <th>Ditambahkan Pada</th>
+                    <th>Status Uji</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="accounts-list">
+                  <!-- Loaded dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PAGE: LOGS ================= -->
+        <section id="page-logs" class="page-section hidden">
+          <div class="action-bar search-bar-wrapper">
+            <h3 class="section-subtitle font-outfit">Riwayat Absensi</h3>
+            <div class="filter-controls">
+              <input type="text" id="logs-search" class="form-input" placeholder="Cari nama, NPM, atau kelas...">
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nama & NPM</th>
+                    <th>Mata Kuliah / Kelas</th>
+                    <th>Status</th>
+                    <th>Pesan Respon</th>
+                    <th>Waktu Absen</th>
+                  </tr>
+                </thead>
+                <tbody id="logs-list">
+                  <!-- Loaded dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PAGE: HEALTH ================= -->
+        <section id="page-health" class="page-section hidden">
+          <div class="health-grid">
+            
+            <div class="panel">
+              <div class="panel-header border-none pb-0">
+                <h4 class="font-outfit"><i data-lucide="database" class="color-blue"></i> Database Status</h4>
+              </div>
+              <div class="health-details">
+                <div class="health-detail-item">
+                  <span class="label">Koneksi Database</span>
+                  <span class="value badge badge-success" id="health-db-status">TERHUBUNG</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Mode Fallback (In-Memory)</span>
+                  <span class="value" id="health-db-fallback">Tidak Aktif</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Lokasi File Database</span>
+                  <span class="value path-value" id="health-db-path">-</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header border-none pb-0">
+                <h4 class="font-outfit"><i data-lucide="key-round" class="color-purple"></i> Konfigurasi Kunci</h4>
+              </div>
+              <div class="health-details">
+                <div class="health-detail-item">
+                  <span class="label">Gemini API Key</span>
+                  <span class="value badge badge-success" id="health-gemini-status">TERSEDIA</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Panjang Encryption Key</span>
+                  <span class="value" id="health-encrypt-len">0 karakter</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header border-none pb-0">
+                <h4 class="font-outfit"><i data-lucide="server" class="color-green"></i> Uptime & Sistem</h4>
+              </div>
+              <div class="health-details">
+                <div class="health-detail-item">
+                  <span class="label">Uptime Node Server</span>
+                  <span class="value" id="health-uptime-val">-</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Nama Modul</span>
+                  <span class="value">absensi-simkuliah</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Versi Modul</span>
+                  <span class="value badge badge-outline-success">v1.0.0</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADD ACCOUNT ==================== -->
+  <div id="add-account-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-outfit"><i data-lucide="user-plus"></i> Tambah Akun SIMKULIAH</h3>
+        <button id="btn-modal-close" class="btn-icon"><i data-lucide="x"></i></button>
+      </div>
+      <form id="add-account-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="acc-nama">Nama Lengkap Mahasiswa</label>
+            <input type="text" id="acc-nama" placeholder="Contoh: Akhmad Najib" required>
+          </div>
+          <div class="form-group">
+            <label for="acc-npm">NPM / Username SIMKULIAH</label>
+            <input type="text" id="acc-npm" placeholder="Contoh: 2404005010019" required>
+          </div>
+          <div class="form-group">
+            <label for="acc-password">Password SIMKULIAH</label>
+            <input type="password" id="acc-password" placeholder="Masukkan password akun" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-modal-submit" class="btn btn-primary font-outfit">Simpan Akun</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
