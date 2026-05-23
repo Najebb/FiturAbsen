@@ -2,12 +2,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Backend route untuk modul Absensi SIMKULIAH (standalone module)
 // Menangani: CRUD akun, bot Playwright, OCR captcha, log absen
-//
-// CARA PAKAI:
-//   const absensi = require('../Absensi-Module');
-//   app.use('/api', absensi.router);
-//
-// DATA_DIR: ../data (relative to this file) → Absensi-Module/data/
 // ─────────────────────────────────────────────────────────────────────────────
 
 const router   = require('express').Router();
@@ -20,73 +14,175 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Tesseract = require('tesseract.js');
 const { Jimp } = require('jimp');
 
-// ── Setup DB ─────────────────────────────────────────────────────────────────
-const DATA_DIR = path.join(__dirname, '../data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// Import config dan logger terpusat
+const config = require('../config/config');
+const logger = require('../utils/logger');
 
-const db = new Database(path.join(DATA_DIR, 'absen.db'));
-db.exec(`
-  CREATE TABLE IF NOT EXISTS accounts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    nama         TEXT    NOT NULL,
-    npm          TEXT    NOT NULL UNIQUE,
-    password_enc TEXT    NOT NULL,
-    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS absen_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_id INTEGER NOT NULL,
-    kelas      TEXT,
-    status     TEXT,
-    pesan      TEXT,
-    absen_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-  );
-`);
+// ── Setup DB dengan Fallback ─────────────────────────────────────────────────
+let db;
+let dbFallback = false;
+
+try {
+  const DATA_DIR = path.dirname(config.dbPath);
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  db = new Database(config.dbPath);
+  logger.info(`Database terhubung di ${config.dbPath}`);
+} catch (e) {
+  logger.error(`Gagal memuat database SQLite di ${config.dbPath}, beralih ke Database Fallback (In-Memory).`, e);
+  dbFallback = true;
+  try {
+    db = new Database(':memory:');
+    logger.warn('Database in-memory berhasil diinisialisasi sebagai fallback.');
+  } catch (err) {
+    logger.error('Database in-memory pun gagal terinisialisasi!', err);
+  }
+}
+
+// Inisialisasi skema tabel jika db tersedia
+if (db) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS accounts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        nama         TEXT    NOT NULL,
+        npm          TEXT    NOT NULL UNIQUE,
+        password_enc TEXT    NOT NULL,
+        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS absen_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id INTEGER NOT NULL,
+        kelas      TEXT,
+        status     TEXT,
+        pesan      TEXT,
+        absen_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+    `);
+    logger.info('Skema database terverifikasi/dibuat.');
+  } catch (e) {
+    logger.error('Gagal membuat skema database:', e);
+  }
+}
 
 // ── Enkripsi ─────────────────────────────────────────────────────────────────
-const RAW_KEY    = process.env.ENCRYPTION_KEY || 'ganti-dengan-32-karakter-rahasia!';
-const SECRET_KEY = crypto.scryptSync(RAW_KEY, 'simkuliah-salt', 32);
+const SECRET_KEY = (() => {
+  try {
+    const rawKey = config.encryptionKey;
+    if (rawKey.length < 32) {
+      logger.warn(`ENCRYPTION_KEY terlalu pendek (${rawKey.length} karakter). Direkomendasikan minimal 32 karakter.`);
+    }
+    return crypto.scryptSync(rawKey, 'simkuliah-salt', 32);
+  } catch (e) {
+    logger.error('Gagal menginisialisasi Kunci Enkripsi! Menggunakan fallback acak.', e);
+    return crypto.randomBytes(32);
+  }
+})();
 
 function encrypt(text) {
-  const iv  = crypto.randomBytes(16);
-  const c   = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, iv);
-  return iv.toString('hex') + ':' + c.update(text, 'utf8', 'hex') + c.final('hex');
+  try {
+    const iv  = crypto.randomBytes(16);
+    const c   = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, iv);
+    return iv.toString('hex') + ':' + c.update(text, 'utf8', 'hex') + c.final('hex');
+  } catch (e) {
+    logger.error('Gagal melakukan enkripsi password:', e);
+    throw new Error('Proses enkripsi gagal.');
+  }
 }
+
 function decrypt(enc) {
-  const [ivHex, data] = enc.split(':');
-  const d = crypto.createDecipheriv('aes-256-cbc', SECRET_KEY, Buffer.from(ivHex, 'hex'));
-  return d.update(data, 'hex', 'utf8') + d.final('utf8');
+  try {
+    const [ivHex, data] = enc.split(':');
+    const d = crypto.createDecipheriv('aes-256-cbc', SECRET_KEY, Buffer.from(ivHex, 'hex'));
+    return d.update(data, 'hex', 'utf8') + d.final('utf8');
+  } catch (e) {
+    logger.error('Gagal melakukan dekripsi password:', e);
+    throw new Error('Proses dekripsi gagal.');
+  }
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 const Accounts = {
-  getAll:      ()   => db.prepare('SELECT id,nama,npm,created_at FROM accounts ORDER BY created_at DESC').all(),
-  getById:     (id) => db.prepare('SELECT * FROM accounts WHERE id=?').get(id),
-  getPassword: (id) => { const r = db.prepare('SELECT password_enc FROM accounts WHERE id=?').get(id); return r ? decrypt(r.password_enc) : null; },
-  create: ({ nama, npm, password }) => {
-    const r = db.prepare('INSERT INTO accounts (nama,npm,password_enc) VALUES (?,?,?)').run(nama, npm, encrypt(password));
-    return { id: r.lastInsertRowid, nama, npm };
+  getAll: () => {
+    try {
+      return db.prepare('SELECT id,nama,npm,created_at FROM accounts ORDER BY created_at DESC').all();
+    } catch (e) {
+      logger.error('DB Error: Accounts.getAll gagal', e);
+      return [];
+    }
   },
-  delete: (id) => db.prepare('DELETE FROM accounts WHERE id=?').run(id).changes > 0,
+  getById: (id) => {
+    try {
+      return db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
+    } catch (e) {
+      logger.error(`DB Error: Accounts.getById gagal untuk ID ${id}`, e);
+      return null;
+    }
+  },
+  getPassword: (id) => {
+    try {
+      const r = db.prepare('SELECT password_enc FROM accounts WHERE id=?').get(id);
+      return r ? decrypt(r.password_enc) : null;
+    } catch (e) {
+      logger.error(`DB Error: Accounts.getPassword gagal untuk ID ${id}`, e);
+      return null;
+    }
+  },
+  create: ({ nama, npm, password }) => {
+    try {
+      const r = db.prepare('INSERT INTO accounts (nama,npm,password_enc) VALUES (?,?,?)').run(nama, npm, encrypt(password));
+      return { id: r.lastInsertRowid, nama, npm };
+    } catch (e) {
+      logger.error('DB Error: Accounts.create gagal', e);
+      throw e;
+    }
+  },
+  delete: (id) => {
+    try {
+      return db.prepare('DELETE FROM accounts WHERE id=?').run(id).changes > 0;
+    } catch (e) {
+      logger.error(`DB Error: Accounts.delete gagal untuk ID ${id}`, e);
+      return false;
+    }
+  },
 };
+
 const AbsenLog = {
   insert: (accountId, items) => {
-    const s = db.prepare('INSERT INTO absen_log (account_id,kelas,status,pesan) VALUES (?,?,?,?)');
-    db.transaction((rows) => rows.forEach(r => s.run(accountId, r.kelas, r.status, r.pesan)))(items);
+    try {
+      const s = db.prepare('INSERT INTO absen_log (account_id,kelas,status,pesan) VALUES (?,?,?,?)');
+      db.transaction((rows) => rows.forEach(r => s.run(accountId, r.kelas, r.status, r.pesan)))(items);
+    } catch (e) {
+      logger.error(`DB Error: AbsenLog.insert gagal untuk Account ID ${accountId}`, e);
+    }
   },
-  getByAccount: (id) => db.prepare('SELECT * FROM absen_log WHERE account_id=? ORDER BY absen_at DESC LIMIT 50').all(id),
-  getRecent: () => db.prepare(`
-    SELECT l.*,a.nama,a.npm FROM absen_log l
-    JOIN accounts a ON a.id=l.account_id
-    ORDER BY l.absen_at DESC LIMIT 100
-  `).all(),
+  getByAccount: (id) => {
+    try {
+      return db.prepare('SELECT * FROM absen_log WHERE account_id=? ORDER BY absen_at DESC LIMIT 50').all(id);
+    } catch (e) {
+      logger.error(`DB Error: AbsenLog.getByAccount gagal untuk Account ID ${id}`, e);
+      return [];
+    }
+  },
+  getRecent: () => {
+    try {
+      return db.prepare(`
+        SELECT l.*,a.nama,a.npm FROM absen_log l
+        JOIN accounts a ON a.id=l.account_id
+        ORDER BY l.absen_at DESC LIMIT 100
+      `).all();
+    } catch (e) {
+      logger.error('DB Error: AbsenLog.getRecent gagal', e);
+      return [];
+    }
+  },
 };
 
 function buildSummaryLogItems(result) {
   const msg = String(result?.message || '').trim();
   if (!msg) return [];
-  // Simpan ringkasan ketika tidak ada detail kelas, mis. "sudah absen sebelumnya".
   if (result?.absen_list?.length) return [];
   if (/sudah terabsen|sudah absen/i.test(msg)) {
     return [{ kelas: 'SEMUA KELAS', status: 'berhasil', pesan: msg }];
@@ -100,13 +196,14 @@ function buildSummaryLogItems(result) {
   return [{ kelas: 'SEMUA KELAS', status: 'info', pesan: msg }];
 }
 
-// ── Bot ───────────────────────────────────────────────────────────────────────
+// ── Bot & Captcha OCR ────────────────────────────────────────────────────────
 const BASE_URL       = 'https://simkuliah.usk.ac.id';
 const LOGIN_URL      = `${BASE_URL}/index.php/login`;
 const ABSENSI_URL    = `${BASE_URL}/index.php/absensi`;
 const KONFIRMASI_URL = `${BASE_URL}/index.php/absensi/konfirmasi_kehadiran`;
 const runningJobs    = new Set();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const genAI = config.geminiApiKey ? new GoogleGenerativeAI(config.geminiApiKey) : null;
 const GEMINI_MODEL_CANDIDATES = [
   process.env.GEMINI_MODEL,
   'gemini-2.0-flash',
@@ -125,11 +222,10 @@ function pickCaptchaCandidate(raw) {
   const bannedFragments = ['SIM', 'KULIAH', 'LOGIN', 'AKUN', 'NPM', 'VERIFIKASI', 'PEG'];
   const filtered = candidates.filter((c) => {
     const up = c.toUpperCase();
-    if (up.length < 5 || up.length > 6) return false; // captcha umumnya 5-6 char
+    if (up.length < 5 || up.length > 6) return false;
     return !bannedFragments.some((frag) => up.includes(frag));
   });
   if (!filtered.length) return '';
-  // Prioritaskan token alfanumerik dengan panjang paling umum captcha (5-6).
   filtered.sort((a, b) => {
     const score = (s) => {
       if (s.length === 5 || s.length === 6) return 3;
@@ -144,37 +240,39 @@ function pickCaptchaCandidate(raw) {
 async function readCaptcha(buf) {
   let lastErr = null;
 
-  for (const modelName of GEMINI_MODEL_CANDIDATES) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent([
-        "Baca karakter CAPTCHA di gambar ini. Jawab HANYA karakter CAPTCHA-nya saja. Tanpa spasi atau penjelasan apapun.",
-        {
-          inlineData: {
-            data: buf.toString('base64'),
-            mimeType: "image/png",
-          },
-        }
-      ]);
-      const parsed = pickCaptchaCandidate(result.response.text());
-      if (!parsed) throw new Error('Captcha Gemini tidak valid.');
-      return {
-        text: parsed,
-        provider: `gemini:${modelName}`,
-      };
-    } catch (e) {
-      lastErr = e;
-      const msg = String(e?.message || e);
-      // Coba model berikutnya jika model tidak ditemukan/unsupported.
-      if (!/not found|not supported|404/i.test(msg)) break;
+  if (genAI) {
+    for (const modelName of GEMINI_MODEL_CANDIDATES) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent([
+          "Baca karakter CAPTCHA di gambar ini. Jawab HANYA karakter CAPTCHA-nya saja. Tanpa spasi atau penjelasan apapun.",
+          {
+            inlineData: {
+              data: buf.toString('base64'),
+              mimeType: "image/png",
+            },
+          }
+        ]);
+        const parsed = pickCaptchaCandidate(result.response.text());
+        if (!parsed) throw new Error('Captcha Gemini tidak valid.');
+        return {
+          text: parsed,
+          provider: `gemini:${modelName}`,
+        };
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e?.message || e);
+        logger.warn(`Model Gemini ${modelName} gagal membaca captcha: ${msg}`);
+        if (!/not found|not supported|404/i.test(msg)) break;
+      }
     }
+  } else {
+    logger.warn('GEMINI_API_KEY tidak dikonfigurasi. Menggunakan OCR lokal Tesseract.');
   }
 
-  // Fallback OCR lokal (tanpa Gemini quota/key)
+  // Fallback OCR lokal
   try {
     const variants = [buf];
-
-    // Preprocessing beberapa varian untuk meningkatkan akurasi OCR captcha.
     const buildVariant = async (thresholdMax, invert = false) => {
       const img = await Jimp.read(buf);
       img.greyscale().contrast(0.7).normalize().resize({ w: img.bitmap.width * 3, h: img.bitmap.height * 3 });
@@ -192,7 +290,7 @@ async function readCaptcha(buf) {
     for (const vb of variants) {
       const ocr = await Tesseract.recognize(vb, 'eng', {
         logger: () => {},
-        tessedit_pageseg_mode: 8, // single word
+        tessedit_pageseg_mode: 8,
         tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
       });
       const raw = String(ocr?.data?.text || '').trim();
@@ -204,6 +302,7 @@ async function readCaptcha(buf) {
 
     if (best?.parsed) return { text: best.parsed, provider: 'tesseract' };
   } catch (ocrErr) {
+    logger.error('Gagal memproses OCR lokal Tesseract:', ocrErr);
     if (!lastErr) lastErr = ocrErr;
   }
 
@@ -211,7 +310,6 @@ async function readCaptcha(buf) {
 }
 
 async function captureCaptchaBuffer(page) {
-  // 1) Ambil langsung dari <img id="captcha-img"> (paling akurat)
   try {
     const img = page.locator('#captcha-img').first();
     if (await img.count()) {
@@ -224,7 +322,6 @@ async function captureCaptchaBuffer(page) {
     }
   } catch {}
 
-  // 2) Fallback screenshot elemen captcha
   for (const sel of ['#captcha-img', "img[src*='captcha']", "img[src*='kode']", 'canvas']) {
     try {
       const el = page.locator(sel).first();
@@ -232,12 +329,21 @@ async function captureCaptchaBuffer(page) {
       if (box) return await el.screenshot();
     } catch {}
   }
-
   return null;
 }
 
 async function runAbsen({ npm, password }) {
-  const browser = await chromium.launch({ headless: true });
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: config.playwright.headless,
+      timeout: config.playwright.timeout
+    });
+  } catch (e) {
+    logger.error('Gagal menjalankan Chromium Playwright!', e);
+    return { success: false, message: 'Gagal menjalankan Chromium Playwright. Pastikan browser terinstal.', absen_list: [], captcha_provider: 'unknown' };
+  }
+
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
@@ -245,7 +351,7 @@ async function runAbsen({ npm, password }) {
   const page = await context.newPage();
 
   try {
-    // Login
+    logger.info(`Memulai proses absen login untuk NPM: ${npm}`);
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle', timeout: 20000 });
     let loggedIn = false;
     let invalidCaptchaCount = 0;
@@ -255,7 +361,6 @@ async function runAbsen({ npm, password }) {
       await page.fill('input[placeholder="NIP/NPM"], input[name="username"], input[name="npm"]', npm);
       await page.fill('input[placeholder="Password"], input[name="password"]', password);
 
-      // Baca captcha
       let captchaText = '';
       const captchaBuf = await captureCaptchaBuffer(page);
       if (captchaBuf) {
@@ -263,7 +368,9 @@ async function runAbsen({ npm, password }) {
           const cap = await readCaptcha(captchaBuf);
           captchaText = cap.text;
           lastCaptchaProvider = cap.provider || lastCaptchaProvider;
-        } catch {}
+        } catch (e) {
+          logger.warn(`Percobaan membaca captcha ${i} gagal: ${e.message}`);
+        }
       }
       if (!captchaText) {
         try {
@@ -274,14 +381,14 @@ async function runAbsen({ npm, password }) {
       }
 
       if (!captchaText) {
-        console.log(`[Login attempt ${i}] captcha tidak terbaca valid, refresh & retry`);
+        logger.info(`[Login attempt ${i}] captcha tidak terbaca valid, refresh & retry`);
         invalidCaptchaCount++;
         try { await page.click('.ti-reload, #refresh', { timeout: 2000 }); } catch { await page.reload({ waitUntil: 'networkidle' }); }
         await page.waitForTimeout(800);
         continue;
       }
 
-      console.log(`[Login attempt ${i}] provider: ${lastCaptchaProvider}, captcha: "${captchaText}"`);
+      logger.info(`[Login attempt ${i}] provider: ${lastCaptchaProvider}, captcha: "${captchaText}"`);
       await page.fill('input[placeholder="Masukkan kode verifikasi"], input[name="captcha"], input[id*="captcha"]', captchaText);
       await Promise.all([
         page.waitForLoadState('networkidle', { timeout: 20000 }),
@@ -289,7 +396,6 @@ async function runAbsen({ npm, password }) {
       ]);
 
       if (!page.url().includes('login')) { loggedIn = true; break; }
-      // Refresh captcha
       try { await page.click('.ti-reload, #refresh', { timeout: 2000 }); } catch { await page.reload({ waitUntil: 'networkidle' }); }
       await page.waitForTimeout(600);
     }
@@ -298,6 +404,7 @@ async function runAbsen({ npm, password }) {
       const failMessage = invalidCaptchaCount >= 2
         ? 'Login gagal: CAPTCHA tidak terbaca valid. Coba lagi atau aktifkan Gemini API.'
         : 'Login gagal. Cek NPM/password.';
+      logger.warn(`Login gagal untuk NPM ${npm}: ${failMessage}`);
       return {
         success: false,
         message: failMessage,
@@ -306,10 +413,9 @@ async function runAbsen({ npm, password }) {
       };
     }
 
-    // Halaman absensi
+    logger.info(`Login berhasil untuk NPM ${npm}. Menavigasi ke halaman absensi...`);
     await page.goto(ABSENSI_URL, { waitUntil: 'networkidle', timeout: 20000 });
 
-    // Ekstrak jadwal
     const jadwalList = await page.evaluate(() => {
       const results = [];
       document.querySelectorAll('[id^="konfirmasi-kehadiran-"]').forEach(btn => {
@@ -348,6 +454,7 @@ async function runAbsen({ npm, password }) {
 
     if (jadwalList.length === 0) {
       const sudah = await page.locator('text=Anda sudah absen').count();
+      logger.info(`Tidak ada tombol konfirmasi untuk NPM ${npm}. Terabsen: ${sudah > 0}`);
       return {
         success: true,
         message: sudah > 0 ? 'Sudah terabsen semua.' : 'Belum masuk waktu absen / tidak ada jadwal aktif saat ini.',
@@ -357,13 +464,11 @@ async function runAbsen({ npm, password }) {
       };
     }
 
-    // Konfirmasi satu per satu
     const absen_list = [];
     for (const j of jadwalList) {
       try {
         let res;
         if (j.fallback) {
-          // Klik + handle swal
           let txt = null;
           const h = async (r) => { if (r.url().includes('konfirmasi_kehadiran')) try { txt = await r.text(); } catch {} };
           page.on('response', h);
@@ -374,7 +479,6 @@ async function runAbsen({ npm, password }) {
           page.off('response', h);
           res = { kelas: j.namaKelas, status: (txt||'').trim()==='success'?'berhasil':'gagal', pesan: (txt||'').trim()||'Tidak ada respon' };
         } else {
-          // AJAX langsung
           const r = await page.evaluate(async ({ url, data }) => {
             try {
               const body = new URLSearchParams(data).toString();
@@ -385,9 +489,10 @@ async function runAbsen({ npm, password }) {
           const ok = r.ok && r.text.trim() === 'success';
           res = { kelas: j.namaKelas, status: ok?'berhasil':'gagal', pesan: ok?'Kehadiran berhasil dikonfirmasi':(r.text||r.error||'Error') };
         }
-        console.log(`[Absensi] ${res.status==='berhasil'?'✅':'❌'} ${j.namaKelas}`);
+        logger.info(`[Absensi NPM ${npm}] ${res.status==='berhasil'?'✅':'❌'} ${j.namaKelas}`);
         absen_list.push(res);
       } catch(e) {
+        logger.error(`Error konfirmasi kelas ${j.namaKelas} untuk NPM ${npm}`, e);
         absen_list.push({ kelas: j.namaKelas, status:'error', pesan: e.message });
       }
     }
@@ -410,86 +515,201 @@ async function runAbsen({ npm, password }) {
     };
 
   } catch(e) {
+    logger.error(`Error pada proses absensi NPM ${npm}`, e);
     return { success: false, message: `Error: ${e.message}`, absen_list: [], captcha_provider: 'unknown' };
   } finally {
-    await browser.close();
+    try {
+      await browser.close();
+    } catch (e) {
+      logger.error('Error saat menutup browser Playwright', e);
+    }
   }
 }
 
+// ── Startup Validation ────────────────────────────────────────────────────────
+(() => {
+  logger.info('=== Memulai Startup Validation Absensi-Module ===');
+  try {
+    const dataDir = path.dirname(config.dbPath);
+    fs.mkdirSync(dataDir, { recursive: true });
+    logger.info(`Direktori data siap: ${dataDir}`);
+  } catch (e) {
+    logger.warn('Gagal memverifikasi/membuat direktori data:', e);
+  }
+
+  if (dbFallback) {
+    logger.warn('Aplikasi berjalan dengan Database Fallback (In-Memory). Data tidak akan tersimpan secara permanen.');
+  } else {
+    logger.info('Koneksi SQLite primer operasional.');
+  }
+
+  if (config.encryptionKey === 'ganti-dengan-32-karakter-rahasia!') {
+    logger.warn('Aplikasi menggunakan ENCRYPTION_KEY default. Sangat tidak direkomendasikan untuk production!');
+  } else if (config.encryptionKey.length < 32) {
+    logger.warn(`ENCRYPTION_KEY kurang dari 32 karakter (${config.encryptionKey.length}).`);
+  } else {
+    logger.info('ENCRYPTION_KEY terdeteksi dan dikonfigurasi.');
+  }
+
+  if (!config.geminiApiKey) {
+    logger.warn('GEMINI_API_KEY kosong. Sistem akan menggunakan Tesseract OCR lokal yang memiliki tingkat akurasi lebih rendah.');
+  } else {
+    logger.info('GEMINI_API_KEY terdeteksi.');
+  }
+
+  try {
+    require('playwright');
+    logger.info('Playwright SDK terinstall.');
+  } catch (e) {
+    logger.error('Playwright SDK tidak ditemukan! Bot tidak akan bisa berjalan.', e);
+  }
+
+  logger.info('=== Startup Validation Selesai ===');
+})();
+
 // ── Routes ────────────────────────────────────────────────────────────────────
+
+// GET /health
+router.get('/health', (req, res) => {
+  let dbOk = false;
+  try {
+    db.prepare('SELECT 1').get();
+    dbOk = true;
+  } catch (e) {
+    logger.error('Koneksi database ke healthcheck gagal', e);
+  }
+
+  const status = {
+    status: dbOk && !dbFallback ? 'healthy' : 'degraded',
+    database: {
+      connected: dbOk,
+      fallbackMode: dbFallback,
+      path: config.dbPath
+    },
+    config: {
+      hasGeminiKey: !!config.geminiApiKey,
+      encryptionKeyLength: config.encryptionKey.length
+    },
+    uptime: process.uptime()
+  };
+
+  res.status(status.status === 'healthy' ? 200 : 503).json(status);
+});
 
 // GET /api/accounts
 router.get('/accounts', (req, res) => {
-  try { res.json({ success: true, data: Accounts.getAll() }); }
-  catch(e) { res.status(500).json({ success: false, message: e.message }); }
+  try {
+    res.json({ success: true, data: Accounts.getAll() });
+  } catch(e) {
+    logger.error('API Error: GET /accounts gagal', e);
+    res.status(500).json({ success: false, message: 'Gagal mengambil data akun dari database.' });
+  }
 });
 
 // POST /api/accounts
 router.post('/accounts', (req, res) => {
   const { nama, npm, password } = req.body || {};
   if (!nama || !npm || !password)
-    return res.status(400).json({ success: false, message: "nama, npm, password wajib diisi." });
+    return res.status(400).json({ success: false, message: "Nama, NPM, dan Password wajib diisi." });
   try {
     const acc = Accounts.create({ nama, npm, password });
     res.status(201).json({ success: true, data: acc });
   } catch(e) {
-    if (e.message.includes('UNIQUE')) return res.status(409).json({ success: false, message: 'NPM sudah terdaftar.' });
-    res.status(500).json({ success: false, message: e.message });
+    if (e.message.includes('UNIQUE')) {
+      return res.status(409).json({ success: false, message: 'NPM sudah terdaftar.' });
+    }
+    logger.error('API Error: POST /accounts gagal', e);
+    res.status(500).json({ success: false, message: 'Gagal menambahkan akun ke database.' });
   }
 });
 
 // DELETE /api/accounts/:id
 router.delete('/accounts/:id', (req, res) => {
-  const deleted = Accounts.delete(Number(req.params.id));
-  if (!deleted) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
-  res.json({ success: true, message: 'Akun dihapus.' });
+  try {
+    const deleted = Accounts.delete(Number(req.params.id));
+    if (!deleted) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+    res.json({ success: true, message: 'Akun berhasil dihapus.' });
+  } catch (e) {
+    logger.error(`API Error: DELETE /accounts/${req.params.id} gagal`, e);
+    res.status(500).json({ success: false, message: 'Gagal menghapus akun dari database.' });
+  }
 });
 
 // GET /api/accounts/:id/log
 router.get('/accounts/:id/log', (req, res) => {
-  res.json({ success: true, data: AbsenLog.getByAccount(Number(req.params.id)) });
+  try {
+    res.json({ success: true, data: AbsenLog.getByAccount(Number(req.params.id)) });
+  } catch (e) {
+    logger.error(`API Error: GET /accounts/${req.params.id}/log gagal`, e);
+    res.status(500).json({ success: false, message: 'Gagal mengambil log akun.' });
+  }
 });
 
 // POST /api/absen/all
 router.post('/absen/all', async (req, res) => {
-  const accounts = Accounts.getAll();
-  if (!accounts.length) return res.status(404).json({ success: false, message: 'Belum ada akun.' });
+  try {
+    const accounts = Accounts.getAll();
+    if (!accounts.length) return res.status(404).json({ success: false, message: 'Belum ada akun terdaftar.' });
 
-  const jobs = accounts.map(async acc => {
-    const result = await runAbsen({ npm: acc.npm, password: Accounts.getPassword(acc.id) });
-    const items = result.absen_list?.length ? result.absen_list : buildSummaryLogItems(result);
-    if (items.length) AbsenLog.insert(acc.id, items);
-    return { account_id: acc.id, nama: acc.nama, npm: acc.npm, ...result };
-  });
+    const jobs = accounts.map(async acc => {
+      try {
+        const password = Accounts.getPassword(acc.id);
+        if (!password) throw new Error('Password tidak ditemukan atau gagal didekripsi.');
+        const result = await runAbsen({ npm: acc.npm, password });
+        const items = result.absen_list?.length ? result.absen_list : buildSummaryLogItems(result);
+        if (items.length) AbsenLog.insert(acc.id, items);
+        return { account_id: acc.id, nama: acc.nama, npm: acc.npm, ...result };
+      } catch (err) {
+        logger.error(`Gagal memproses absen massal untuk NPM: ${acc.npm}`, err);
+        return { account_id: acc.id, nama: acc.nama, npm: acc.npm, success: false, message: err.message };
+      }
+    });
 
-  const settled = await Promise.allSettled(jobs);
-  const data    = settled.map(r => r.status === 'fulfilled' ? r.value : { success: false, message: r.reason?.message });
-  res.json({ success: true, message: `${accounts.length} akun diproses.`, data });
+    const settled = await Promise.allSettled(jobs);
+    const data    = settled.map(r => r.status === 'fulfilled' ? r.value : { success: false, message: r.reason?.message });
+    res.json({ success: true, message: `${accounts.length} akun diproses.`, data });
+  } catch (e) {
+    logger.error('API Error: POST /absen/all gagal', e);
+    res.status(500).json({ success: false, message: 'Gagal menjalankan absen massal.' });
+  }
 });
 
 // POST /api/absen/:id
 router.post('/absen/:id', async (req, res) => {
-  const id      = Number(req.params.id);
-  const account = Accounts.getById(id);
-  if (!account) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
-  if (runningJobs.has(id)) return res.status(409).json({ success: false, message: 'Bot sedang berjalan untuk akun ini.' });
-
-  runningJobs.add(id);
+  const id = Number(req.params.id);
   try {
-    const result = await runAbsen({ npm: account.npm, password: Accounts.getPassword(id) });
-    const items = result.absen_list?.length ? result.absen_list : buildSummaryLogItems(result);
-    if (items.length) AbsenLog.insert(id, items);
-    res.json({ success: result.success, message: result.message, data: result.absen_list });
-  } catch(e) {
-    res.status(500).json({ success: false, message: e.message, data: [] });
-  } finally {
-    runningJobs.delete(id);
+    const account = Accounts.getById(id);
+    if (!account) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+    if (runningJobs.has(id)) return res.status(409).json({ success: false, message: 'Proses absen sedang berjalan untuk akun ini.' });
+
+    runningJobs.add(id);
+    try {
+      const password = Accounts.getPassword(id);
+      if (!password) throw new Error('Password tidak ditemukan atau gagal didekripsi.');
+      const result = await runAbsen({ npm: account.npm, password });
+      const items = result.absen_list?.length ? result.absen_list : buildSummaryLogItems(result);
+      if (items.length) AbsenLog.insert(id, items);
+      res.json({ success: result.success, message: result.message, data: result.absen_list });
+    } catch(err) {
+      logger.error(`Gagal memproses absen untuk ID ${id}`, err);
+      res.status(500).json({ success: false, message: `Gagal menjalankan absen: ${err.message}`, data: [] });
+    } finally {
+      runningJobs.delete(id);
+    }
+  } catch (e) {
+    logger.error(`API Error: POST /absen/${id} gagal`, e);
+    res.status(500).json({ success: false, message: 'Gagal memproses permintaan absen.' });
   }
 });
 
 // GET /api/absen/log
 router.get('/absen/log', (req, res) => {
-  res.json({ success: true, data: AbsenLog.getRecent() });
+  try {
+    res.json({ success: true, data: AbsenLog.getRecent() });
+  } catch (e) {
+    logger.error('API Error: GET /absen/log gagal', e);
+    res.status(500).json({ success: false, message: 'Gagal mengambil data log absensi.' });
+  }
 });
 
 module.exports = router;
