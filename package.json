@@ -1,0 +1,29 @@
+{
+  "name": "absensi-simkuliah",
+  "version": "1.0.0",
+  "description": "Modul absensi otomatis SIMKULIAH — Playwright + OCR captcha (Gemini/Tesseract)",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "npx playwright install chromium"
+  },
+  "keywords": [
+    "absensi",
+    "simkuliah",
+    "playwright",
+    "captcha",
+    "ocr"
+  ],
+  "author": "ZieeBot",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "better-sqlite3": "^12.9.0",
+    "express": "^5.2.1",
+    "jimp": "^1.6.1",
+    "playwright": "^1.60.0",
+    "tesseract.js": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}

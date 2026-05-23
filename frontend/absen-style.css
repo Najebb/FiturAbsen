@@ -1,0 +1,55 @@
+/* =============================================================================
+   ABSEN SIMKULIAH — CSS Tambahan
+   Tempel kode ini di AKHIR file style.css kamu
+   ============================================================================= */
+
+/* ── Spinner loading ─────────────────────────────────────────────────────── */
+.absen-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,23,68,0.3);
+  border-top-color: var(--red-bright, #FF1744);
+  border-radius: 50%;
+  animation: absen-spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes absen-spin { to { transform: rotate(360deg); } }
+
+/* ── Tombol ABSEN SEMUA ──────────────────────────────────────────────────── */
+.absen-all-btn {
+  background: linear-gradient(135deg, #FF1744 0%, #8B0000 100%) !important;
+  border: 1px solid #FF1744 !important;
+  color: #fff !important;
+  letter-spacing: 2px;
+  font-weight: 700;
+  box-shadow: 0 0 16px rgba(255,23,68,0.35);
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+.absen-all-btn:hover:not(:disabled) {
+  box-shadow: 0 0 28px rgba(255,23,68,0.6);
+  transform: translateY(-1px);
+}
+.absen-all-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Tombol absen per akun ───────────────────────────────────────────────── */
+.absen-single-btn {
+  transition: all 0.2s;
+  letter-spacing: 1.5px;
+}
+.absen-single-btn:hover:not(:disabled) {
+  box-shadow: 0 0 14px rgba(255,23,68,0.4);
+}
+
+/* ── Card akun — glow saat hover ─────────────────────────────────────────── */
+.absen-account-card {
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.absen-account-card:hover {
+  border-color: rgba(255,23,68,0.5) !important;
+  box-shadow: 0 0 20px rgba(255,23,68,0.12);
+}

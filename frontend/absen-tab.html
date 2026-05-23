@@ -1,0 +1,149 @@
+<!--
+==============================================================================
+  PETUNJUK: Tambahkan kode di bawah ini ke index.html kamu di 2 tempat:
+==============================================================================
+
+▸ TEMPAT 1 — Tambah tombol tab baru di dalam <div class="tab-bar">
+  Tempel SETELAH baris:
+  <button class="tab-btn" onclick="switchTab('tambah')">➕ TAMBAH DATA</button>
+==============================================================================
+-->
+
+<button class="tab-btn" onclick="switchTab('absen')">🎯 ABSEN SIMKULIAH</button>
+
+<!--
+==============================================================================
+  TEMPAT 2 — Tambah panel tab baru di dalam <div class="dashboard-wrap reveal">
+  Tempel SETELAH penutup </div> dari tab-tambah (cari: </div> akhir tab-tambah)
+==============================================================================
+-->
+
+<!-- TAB: ABSEN SIMKULIAH -->
+<div class="tab-panel" id="tab-absen">
+
+  <!-- ── HEADER TOOLBAR ── -->
+  <div class="tab-toolbar" style="flex-wrap:wrap;gap:1rem;">
+    <div style="font-family:'Share Tech Mono',monospace;font-size:0.72rem;color:var(--text-dim);">
+      <span style="color:var(--red-bright);">$</span> SELECT * FROM akun_absen —
+      <span id="absenCount" style="color:var(--red-bright);">0</span> accounts
+    </div>
+    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:center;">
+      <button class="add-btn absen-all-btn" id="btnAbsenAll" onclick="absenAll()">
+        ⚡ ABSEN SEMUA AKUN
+      </button>
+      <button class="add-btn" style="background:transparent;border:1px solid #444;color:var(--text-dim);" onclick="switchAbsenView('accounts')">
+        👥 AKUN
+      </button>
+      <button class="add-btn" style="background:transparent;border:1px solid #444;color:var(--text-dim);" onclick="switchAbsenView('add')">
+        ➕ TAMBAH AKUN
+      </button>
+      <button class="add-btn" style="background:transparent;border:1px solid #444;color:var(--text-dim);" onclick="switchAbsenView('log')">
+        📋 LOG
+      </button>
+    </div>
+  </div>
+
+  <!-- STATUS BAR GLOBAL -->
+  <div id="absenStatusBar" style="display:none;margin-bottom:1rem;padding:10px 16px;
+    font-family:'Share Tech Mono',monospace;font-size:0.75rem;letter-spacing:1px;
+    border:1px solid;border-radius:4px;">
+  </div>
+
+  <!-- ════════════════════════════════════ -->
+  <!--  VIEW: DAFTAR AKUN                  -->
+  <!-- ════════════════════════════════════ -->
+  <div id="absenView-accounts">
+    <div style="font-family:'Share Tech Mono',monospace;font-size:0.7rem;
+      color:var(--text-dim);margin-bottom:1rem;">
+      <span style="color:var(--red-bright);">$</span> LOADED ACCOUNTS — klik tombol absen per akun atau gunakan ABSEN SEMUA
+    </div>
+    <div id="akунGrid" class="mhs-grid"></div>
+    <div id="absenEmptyMsg" style="display:none;text-align:center;padding:3rem;
+      font-family:'Share Tech Mono',monospace;font-size:0.8rem;color:var(--text-dim);">
+      <div style="font-size:2rem;margin-bottom:1rem;">👤</div>
+      Belum ada akun terdaftar.<br>
+      <span style="color:var(--red-bright);">→</span>
+      <button onclick="switchAbsenView('add')"
+        style="background:none;border:none;color:var(--red-bright);cursor:pointer;
+          font-family:'Share Tech Mono',monospace;font-size:0.8rem;text-decoration:underline;">
+        Tambah akun sekarang
+      </button>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ -->
+  <!--  VIEW: TAMBAH AKUN                  -->
+  <!-- ════════════════════════════════════ -->
+  <div id="absenView-add" style="display:none;">
+    <div style="font-family:'Share Tech Mono',monospace;font-size:0.72rem;
+      color:var(--text-dim);margin-bottom:1.5rem;">
+      <span style="color:var(--red-bright);">$</span> INSERT INTO akun_absen VALUES (...)
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">Nama Lengkap *</label>
+        <input class="form-input" id="ab-nama" type="text" placeholder="Contoh: Akhmad Najib Alfaizi">
+      </div>
+      <div class="form-group">
+        <label class="form-label">NIM / NPM *</label>
+        <input class="form-input" id="ab-npm" type="text" placeholder="Contoh: 2208107010001">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">Password SIMKULIAH *</label>
+        <div style="position:relative;">
+          <input class="form-input" id="ab-password" type="password"
+            placeholder="Password akun SIMKULIAH"
+            style="padding-right:3rem;">
+          <button onclick="togglePw()" style="
+            position:absolute;right:10px;top:50%;transform:translateY(-50%);
+            background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1rem;">
+            👁️
+          </button>
+        </div>
+        <div style="margin-top:0.4rem;font-family:'Share Tech Mono',monospace;
+          font-size:0.65rem;color:#555;">
+          🔒 Password dienkripsi AES-256 sebelum disimpan
+        </div>
+      </div>
+      <div class="form-actions form-full">
+        <button class="add-btn" onclick="tambahAkunAbsen()">✅ SIMPAN AKUN</button>
+        <button class="btn-outline" style="padding:10px 24px;font-size:0.7rem;" onclick="resetFormAbsen()">🔄 RESET</button>
+      </div>
+      <div id="absenFormMsg" style="grid-column:1/-1;display:none;padding:12px 16px;
+        border:1px solid;font-family:'Share Tech Mono',monospace;font-size:0.78rem;
+        letter-spacing:1px;"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════ -->
+  <!--  VIEW: LOG ABSEN                    -->
+  <!-- ════════════════════════════════════ -->
+  <div id="absenView-log" style="display:none;">
+    <div class="tab-toolbar" style="margin-bottom:1rem;">
+      <div style="font-family:'Share Tech Mono',monospace;font-size:0.72rem;color:var(--text-dim);">
+        <span style="color:var(--red-bright);">$</span> SELECT * FROM absen_log ORDER BY absen_at DESC LIMIT 100
+      </div>
+      <button class="add-btn" style="background:transparent;border:1px solid #444;
+        color:var(--text-dim);font-size:0.62rem;" onclick="loadAbsenLog()">
+        🔄 REFRESH
+      </button>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="tugas-table">
+        <thead>
+          <tr>
+            <th>NAMA</th><th>NPM</th><th>KELAS</th><th>STATUS</th><th>WAKTU</th>
+          </tr>
+        </thead>
+        <tbody id="absenLogBody">
+          <tr><td colspan="5" style="text-align:center;color:var(--text-dim);
+            font-family:'Share Tech Mono',monospace;font-size:0.75rem;">
+            Klik REFRESH untuk muat log
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+<!-- /TAB ABSEN -->
