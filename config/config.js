@@ -1,9 +1,23 @@
 const path = require('path');
+const fs = require('fs');
 
 try {
+  // 1. Coba load .env lokal di Absensi-Module terlebih dahulu
   require('dotenv').config();
 } catch (e) {
-  // Silent catch jika dotenv tidak terinstall di sub-module
+  // Silent catch
+}
+
+// 2. Jika ENCRYPTION_KEY tidak ada di .env lokal, coba cari di sibling Jebb Bot/.env
+if (!process.env.ENCRYPTION_KEY) {
+  try {
+    const siblingEnvPath = path.join(__dirname, '../../Jebb Bot/.env');
+    if (fs.existsSync(siblingEnvPath)) {
+      require('dotenv').config({ path: siblingEnvPath });
+    }
+  } catch (e) {
+    // Silent catch
+  }
 }
 
 module.exports = {
