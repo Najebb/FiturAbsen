@@ -1,0 +1,30 @@
+# --- Node.js/Dependencies ---
+node_modules
+npm-debug.log
+yarn-error.log
+
+# --- Local Databases & Backups ---
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/backups/
+
+# --- Logs ---
+logs/
+*.log
+
+# --- Environment Configurations ---
+.env
+.env.*
+!.env.production
+!.env.staging
+!.env.development
+
+# --- Git & CI/CD ---
+.git
+.github
+.gitignore
+
+# --- Operating System Files ---
+.DS_Store
+Thumbs.db

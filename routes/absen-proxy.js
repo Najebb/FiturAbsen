@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const router   = require('express').Router();
+module.exports = router;
 const Database = require('better-sqlite3');
 const crypto   = require('crypto');
 const path     = require('path');
@@ -17,6 +18,8 @@ const { Jimp } = require('jimp');
 // Import config dan logger terpusat
 const config = require('../config/config');
 const logger = require('../utils/logger');
+const BrowserManager = require('../utils/browser-manager');
+const NotificationService = require('../services/notification');
 
 // ── Setup DB dengan Fallback ─────────────────────────────────────────────────
 let db;
@@ -35,6 +38,10 @@ try {
   try {
     db = new Database(':memory:');
     logger.warn('Database in-memory berhasil diinisialisasi sebagai fallback.');
+    
+    // Kirim notifikasi fallback db aktif
+    NotificationService.sendDbFallbackActive({ error: e.message || String(e) })
+      .catch(err => logger.warn('[DB Init] Gagal mengirim notifikasi fallback:', err.message));
   } catch (err) {
     logger.error('Database in-memory pun gagal terinisialisasi!', err);
   }
@@ -58,6 +65,35 @@ if (db) {
         status     TEXT,
         pesan      TEXT,
         absen_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS scheduler_configs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id   INTEGER NOT NULL,
+        cron_pattern TEXT    NOT NULL,
+        timezone     TEXT    DEFAULT 'Asia/Jakarta',
+        is_enabled   INTEGER DEFAULT 1,
+        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS scheduler_history (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        scheduler_id INTEGER NOT NULL,
+        account_id   INTEGER NOT NULL,
+        status       TEXT    NOT NULL,
+        message      TEXT,
+        executed_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS scheduler_failed_jobs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        scheduler_id INTEGER NOT NULL,
+        account_id   INTEGER NOT NULL,
+        retry_count  INTEGER DEFAULT 0,
+        last_error   TEXT,
+        next_retry_at DATETIME,
+        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
     `);
@@ -333,22 +369,13 @@ async function captureCaptchaBuffer(page) {
 }
 
 async function runAbsen({ npm, password }) {
-  let browser;
+  let page;
   try {
-    browser = await chromium.launch({
-      headless: config.playwright.headless,
-      timeout: config.playwright.timeout
-    });
+    page = await BrowserManager.createPage();
   } catch (e) {
-    logger.error('Gagal menjalankan Chromium Playwright!', e);
-    return { success: false, message: 'Gagal menjalankan Chromium Playwright. Pastikan browser terinstal.', absen_list: [], captcha_provider: 'unknown' };
+    logger.error('Gagal menjalankan Chromium Playwright via Browser Manager!', e);
+    return { success: false, message: 'Gagal menjalankan Chromium Playwright via Browser Manager. Pastikan browser terinstal.', absen_list: [], captcha_provider: 'unknown' };
   }
-
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-  });
-  const page = await context.newPage();
 
   try {
     logger.info(`Memulai proses absen login untuk NPM: ${npm}`);
@@ -519,9 +546,9 @@ async function runAbsen({ npm, password }) {
     return { success: false, message: `Error: ${e.message}`, absen_list: [], captcha_provider: 'unknown' };
   } finally {
     try {
-      await browser.close();
+      await BrowserManager.closePage(page);
     } catch (e) {
-      logger.error('Error saat menutup browser Playwright', e);
+      logger.error('Error saat menutup page Playwright', e);
     }
   }
 }
@@ -712,4 +739,171 @@ router.get('/absen/log', (req, res) => {
   }
 });
 
-module.exports = router;
+// Set export properties early before circular reference imports are triggered
+router.db = db;
+router.runAbsen = runAbsen;
+router.Accounts = Accounts;
+router.AbsenLog = AbsenLog;
+router.runningJobs = runningJobs;
+
+// ── Scheduler API Routes ──────────────────────────────────────────────────────
+const SchedulerDB = require('../services/scheduler-db');
+const scheduler = require('../scheduler/manager');
+
+// GET /api/scheduler/status
+router.get('/scheduler/status', (req, res) => {
+  try {
+    res.json({ success: true, data: scheduler.getHealthStatus() });
+  } catch (e) {
+    logger.error('API Error: GET /scheduler/status gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/scheduler/configs
+router.get('/scheduler/configs', (req, res) => {
+  try {
+    res.json({ success: true, data: SchedulerDB.getConfigs() });
+  } catch (e) {
+    logger.error('API Error: GET /scheduler/configs gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/scheduler/configs
+router.post('/scheduler/configs', (req, res) => {
+  const { account_id, cron_pattern, timezone, is_enabled } = req.body || {};
+  if (!account_id || !cron_pattern) {
+    return res.status(400).json({ success: false, message: 'account_id dan cron_pattern wajib diisi.' });
+  }
+
+  try {
+    const config = SchedulerDB.createConfig({ account_id: Number(account_id), cron_pattern, timezone, is_enabled: is_enabled !== undefined ? Number(is_enabled) : 1 });
+    // Reload task di cron manager
+    scheduler.reloadJob(config.id);
+    res.status(201).json({ success: true, data: config });
+  } catch (e) {
+    logger.error('API Error: POST /scheduler/configs gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// PUT /api/scheduler/configs/:id
+router.put('/scheduler/configs/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const { cron_pattern, timezone, is_enabled } = req.body || {};
+
+  try {
+    const updated = SchedulerDB.updateConfig(id, { 
+      cron_pattern, 
+      timezone, 
+      is_enabled: is_enabled !== undefined ? Number(is_enabled) : undefined 
+    });
+    // Reload task di cron manager
+    scheduler.reloadJob(id);
+    res.json({ success: true, data: updated });
+  } catch (e) {
+    logger.error(`API Error: PUT /scheduler/configs/${id} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// DELETE /api/scheduler/configs/:id
+router.delete('/scheduler/configs/:id', (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    // Unregister di cron manager
+    scheduler.unregisterJob(id);
+    const deleted = SchedulerDB.deleteConfig(id);
+    if (!deleted) return res.status(404).json({ success: false, message: 'Konfigurasi tidak ditemukan.' });
+    res.json({ success: true, message: 'Konfigurasi scheduler dihapus.' });
+  } catch (e) {
+    logger.error(`API Error: DELETE /scheduler/configs/${id} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/scheduler/configs/:id/toggle
+router.post('/scheduler/configs/:id/toggle', (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const current = SchedulerDB.getConfigById(id);
+    if (!current) return res.status(404).json({ success: false, message: 'Konfigurasi tidak ditemukan.' });
+    
+    const newStatus = current.is_enabled === 1 ? 0 : 1;
+    SchedulerDB.updateConfig(id, { is_enabled: newStatus });
+    
+    // Reload task di cron manager
+    scheduler.reloadJob(id);
+    
+    res.json({ success: true, data: { id, is_enabled: newStatus } });
+  } catch (e) {
+    logger.error(`API Error: POST /scheduler/configs/${id}/toggle gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/scheduler/history
+router.get('/scheduler/history', (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 50;
+  try {
+    res.json({ success: true, data: SchedulerDB.getHistory(limit) });
+  } catch (e) {
+    logger.error('API Error: GET /scheduler/history gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// ── Monitoring & Backup APIs ────────────────────────────────────────────────
+const MonitoringService = require('../services/monitoring');
+const BackupService = require('../services/backup');
+
+// GET /api/monitor/stats
+router.get('/monitor/stats', async (req, res) => {
+  try {
+    const stats = await MonitoringService.getStats();
+    res.json({ success: true, data: stats });
+  } catch (e) {
+    logger.error('API Error: GET /monitor/stats gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/backups
+router.get('/backups', (req, res) => {
+  try {
+    const list = BackupService.listBackups();
+    res.json({ success: true, data: list });
+  } catch (e) {
+    logger.error('API Error: GET /backups gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/backups
+router.post('/backups', async (req, res) => {
+  try {
+    const filename = await BackupService.backupNow();
+    res.json({ success: true, message: `Backup berhasil dibuat: ${filename}`, filename });
+  } catch (e) {
+    logger.error('API Error: POST /backups gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/backups/restore
+router.post('/backups/restore', async (req, res) => {
+  const { filename } = req.body || {};
+  if (!filename) {
+    return res.status(400).json({ success: false, message: 'Nama berkas backup wajib dikirim.' });
+  }
+  try {
+    await BackupService.restoreBackup(filename);
+    res.json({ success: true, message: 'Database primer berhasil dipulihkan dari berkas cadangan.' });
+  } catch (e) {
+    logger.error(`API Error: POST /backups/restore untuk ${filename} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Router is already exported at the top, properties assigned early.

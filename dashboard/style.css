@@ -808,6 +808,76 @@ button, input, select {
   gap: 12px;
 }
 
+/* ==================== SCHEDULER LAYOUT & BADGES ==================== */
+.mb-20 {
+  margin-bottom: 20px !important;
+}
+
+.scheduler-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.sched-hist-item {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 13px;
+  transition: all var(--transition-speed);
+}
+
+.sched-hist-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sched-hist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.sched-hist-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sched-hist-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sched-hist-msg {
+  color: var(--text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.badge-paused {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ff9800;
+}
+
+.badge-active {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--color-green);
+}
+
+.badge-retry {
+  background: rgba(41, 121, 255, 0.15);
+  color: var(--color-blue);
+}
+
+.badge-failed {
+  background: rgba(255, 42, 95, 0.15);
+  color: var(--color-red);
+}
+
 /* ==================== RESPONSIVE RULES ==================== */
 .mobile-only {
   display: none !important;

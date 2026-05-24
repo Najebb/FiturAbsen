@@ -77,11 +77,17 @@
         <a href="#accounts" class="nav-item" id="nav-accounts">
           <i data-lucide="users"></i> <span>Akun Mahasiswa</span>
         </a>
+        <a href="#scheduler" class="nav-item" id="nav-scheduler">
+          <i data-lucide="calendar"></i> <span>Auto Scheduler</span>
+        </a>
         <a href="#logs" class="nav-item" id="nav-logs">
           <i data-lucide="history"></i> <span>Riwayat Absen</span>
         </a>
         <a href="#health" class="nav-item" id="nav-health">
           <i data-lucide="activity"></i> <span>Health Monitor</span>
+        </a>
+        <a href="#system-tools" class="nav-item" id="nav-system-tools">
+          <i data-lucide="server"></i> <span>System Tools</span>
         </a>
       </nav>
 
@@ -339,6 +345,163 @@
           </div>
         </section>
 
+        <!-- ================= PAGE: SYSTEM TOOLS ================= -->
+        <section id="page-system-tools" class="page-section hidden">
+          <div class="health-grid">
+            
+            <!-- Live RAM & Process Stats Panel -->
+            <div class="panel">
+              <div class="panel-header border-none pb-0">
+                <h4 class="font-outfit"><i data-lucide="cpu" class="color-blue"></i> Live Resource Monitor</h4>
+              </div>
+              <div class="health-details">
+                <div class="health-detail-item">
+                  <span class="label">RSS Memory</span>
+                  <span class="value" id="sys-rss">-</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Heap Used</span>
+                  <span class="value" id="sys-heap-used">-</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Heap Total</span>
+                  <span class="value" id="sys-heap-total">-</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Running Absensi Jobs</span>
+                  <span class="value badge badge-outline-success" id="sys-active-jobs">0 Aktif</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Active Channels Panel -->
+            <div class="panel">
+              <div class="panel-header border-none pb-0">
+                <h4 class="font-outfit"><i data-lucide="bell-ring" class="color-purple"></i> Notification Channels</h4>
+              </div>
+              <div class="health-details">
+                <div class="health-detail-item">
+                  <span class="label">Discord Webhook</span>
+                  <span class="value" id="noti-discord-status">Memeriksa...</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">Telegram Bot</span>
+                  <span class="value" id="noti-telegram-status">Memeriksa...</span>
+                </div>
+                <div class="health-detail-item">
+                  <span class="label">WhatsApp Gateway</span>
+                  <span class="value" id="noti-whatsapp-status">Memeriksa...</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- SQLite Backup & Restore Administration Panel -->
+          <div class="panel" style="margin-top: 1.5rem;">
+            <div class="panel-header flex-between border-none">
+              <h4 class="font-outfit"><i data-lucide="shield-alert" class="color-green"></i> SQLite Database Backups</h4>
+              <button id="btn-backup-now" class="btn btn-primary font-outfit" style="display: flex; align-items: center; gap: 0.5rem;">
+                <i data-lucide="download"></i> Buat Backup Instan
+              </button>
+            </div>
+            
+            <div class="table-responsive" style="margin-top: 1rem;">
+              <table class="data-table font-outfit" id="table-backups">
+                <thead>
+                  <tr>
+                    <th>Nama Berkas Backup</th>
+                    <th>Ukuran File</th>
+                    <th>Tanggal Pembuatan</th>
+                    <th style="width: 180px; text-align: center;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="backup-list-body">
+                  <tr>
+                    <td colspan="4" class="text-center">Memuat daftar backup...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PAGE: SCHEDULER ================= -->
+        <section id="page-scheduler" class="page-section hidden">
+          <div class="action-bar">
+            <h3 class="section-subtitle font-outfit">Sistem Auto Attendance Scheduler</h3>
+            <button id="btn-add-scheduler-modal" class="btn btn-primary font-outfit">
+              <i data-lucide="plus-circle"></i> Tambah Jadwal Baru
+            </button>
+          </div>
+
+          <!-- Scheduler Monitor Cards -->
+          <div class="stats-grid mb-20">
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-purple-dim">
+                <i data-lucide="activity" class="color-purple"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="scheduler-status-val">Stopped</span>
+                <span class="stat-label">Status Engine</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-blue-dim">
+                <i data-lucide="clock" class="color-blue"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="scheduler-active-jobs">0</span>
+                <span class="stat-label">Jadwal Aktif Berjalan</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper bg-green-dim">
+                <i data-lucide="timer" class="color-green"></i>
+              </div>
+              <div class="stat-data">
+                <span class="stat-value" id="scheduler-uptime-val">0s</span>
+                <span class="stat-label">Scheduler Uptime</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="overview-split">
+            <!-- Left Side: Configs List -->
+            <div class="panel flex-2">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="calendar"></i> Konfigurasi Jadwal Otomatis</h4>
+              </div>
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nama & NPM</th>
+                      <th>Cron Pattern</th>
+                      <th>Timezone</th>
+                      <th>Status</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="scheduler-configs-list">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Right Side: Exec History -->
+            <div class="panel flex-1">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="list-collapse"></i> Logs Eksekusi Otomatis</h4>
+              </div>
+              <div class="scheduler-history-list" id="scheduler-history-list">
+                <!-- Loaded dynamically -->
+              </div>
+            </div>
+          </div>
+        </section>
+
       </main>
     </div>
   </div>
@@ -368,6 +531,52 @@
         <div class="modal-footer">
           <button type="button" id="btn-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
           <button type="submit" id="btn-modal-submit" class="btn btn-primary font-outfit">Simpan Akun</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADD SCHEDULER ==================== -->
+  <div id="add-scheduler-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-outfit"><i data-lucide="calendar-plus"></i> Tambah Jadwal Baru</h3>
+        <button id="btn-sched-modal-close" class="btn-icon"><i data-lucide="x"></i></button>
+      </div>
+      <form id="add-scheduler-form">
+        <input type="hidden" id="sched-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="sched-account">Pilih Akun Mahasiswa</label>
+            <select id="sched-account" class="form-input" required style="background: rgba(30, 41, 59, 0.7); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; width: 100%;">
+              <!-- Loaded dynamically -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="sched-preset">Waktu Preset</label>
+            <select id="sched-preset" class="form-input" style="background: rgba(30, 41, 59, 0.7); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; width: 100%;">
+              <option value="pagi">Pagi Hari (07:30 - Tiap Hari)</option>
+              <option value="siang">Siang Hari (13:30 - Tiap Hari)</option>
+              <option value="sore">Sore Hari (16:30 - Tiap Hari)</option>
+              <option value="multi-3">3x Sehari (07:30, 13:30, 16:30 - Tiap Hari)</option>
+              <option value="multi-5">5x Sehari (07:30, 10:30, 13:30, 16:30, 19:30 - Tiap Hari)</option>
+              <option value="per-jam">Setiap Jam (Uji Coba)</option>
+              <option value="custom" selected>Kustom Cron Pattern</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="sched-cron">Cron Pattern</label>
+            <input type="text" id="sched-cron" placeholder="Contoh: 30 7 * * *" required value="30 7 * * *">
+            <small style="color: var(--text-secondary); display: block; margin-top: 4px;">Menit Jam HariBulan Bulan HariMinggu. Gunakan GMT+7 (Asia/Jakarta).</small>
+          </div>
+          <div class="form-group">
+            <label for="sched-tz">Timezone</label>
+            <input type="text" id="sched-tz" value="Asia/Jakarta" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-sched-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-sched-modal-submit" class="btn btn-primary font-outfit">Simpan Jadwal</button>
         </div>
       </form>
     </div>
