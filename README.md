@@ -96,8 +96,8 @@ SECRET_KEY=masukkan-32-karakter-kunci-enkripsi-anda # Kunci enkripsi AES-256
 SESSION_SECRET=kunci-rahasia-tanda-tangan-token      # Kunci token session JWT
 
 # --- Kredensial Default SUPER_ADMIN ---
-ABSEN_DASHBOARD_USER=admin
-ABSEN_DASHBOARD_PASS=najebb22
+ABSEN_DASHBOARD_USER=nama_username_anda
+ABSEN_DASHBOARD_PASS=password_sangat_rahasia_anda
 
 # --- Database & OCR ---
 DB_PATH=data/absen.db
