@@ -160,6 +160,47 @@ class SchedulerManager {
   }
 
   /**
+   * Memuat ulang seluruh cron jobs untuk akun tertentu setelah kompilasi rule mingguan
+   */
+  reloadAccountConfigs(accountId) {
+    try {
+      logger.info(`[Scheduler Manager] Memuat ulang konfigurasi penjadwalan untuk Akun ID ${accountId}...`);
+      
+      // 1. Dapatkan semua config aktif dari DB
+      const allConfigs = SchedulerDB.getConfigs();
+      const accountConfigs = allConfigs.filter(c => c.account_id === accountId);
+      
+      // 2. Stop dan bersihkan task aktif lama yang terkait dengan akun ini
+      // ID lama yang sudah dihapus dari DB akan terdeteksi karena getConfigById mengembalikan null.
+      for (const activeId of Array.from(this.activeTasks.keys())) {
+        const config = SchedulerDB.getConfigById(activeId);
+        if (!config || config.account_id === accountId) {
+          this.unregisterJob(activeId);
+        }
+      }
+      
+      // 3. Daftarkan config baru hasil kompilasi
+      const proxy = require('../routes/absen-proxy');
+      const acc = proxy.Accounts.getById(accountId);
+      if (acc && acc.is_active === 1) {
+        for (const config of accountConfigs) {
+          if (config.is_enabled === 1) {
+            const detailedConfig = {
+              ...config,
+              nama: acc.nama,
+              npm: acc.npm
+            };
+            this.registerJob(detailedConfig);
+          }
+        }
+      }
+      logger.info(`[Scheduler Manager] Selesai memuat ulang konfigurasi untuk Akun ID ${accountId}.`);
+    } catch (e) {
+      logger.error(`[Scheduler Manager] Gagal memuat ulang konfigurasi untuk Akun ID ${accountId}:`, e);
+    }
+  }
+
+  /**
    * Loop interval untuk recovery/failed queue. Mencari failed_jobs yang waktu retry-nya sudah lewat.
    */
   startFailedQueueInterval() {

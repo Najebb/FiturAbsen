@@ -61,6 +61,25 @@ const AbsensiWorker = {
         throw new Error('Akun mahasiswa tidak ditemukan dalam database.');
       }
       
+      // Smart Rules & Kalender Akademik Check
+      const CalendarService = require('../services/calendar');
+      const ruleCheck = CalendarService.checkShouldRun(accountId);
+      if (!ruleCheck.shouldRun) {
+        logger.info(`[Scheduler Worker] Skip absensi otomatis Scheduler ID ${schedulerId} (${account.nama}) -> Alasan: ${ruleCheck.reason}`);
+        
+        // Catat ke riwayat scheduler dengan status SKIPPED dan alasannya
+        SchedulerDB.insertHistory({
+          scheduler_id: schedulerId,
+          account_id: accountId,
+          status: 'SKIPPED',
+          message: `Dilewati: ${ruleCheck.reason}`
+        });
+
+        // Bersihkan antrean failed_jobs jika ada agar tidak retrying terus di masa libur/liburan
+        SchedulerDB.deleteFailedJobByScheduler(schedulerId);
+        return;
+      }
+      
       const decryptedPassword = proxy.Accounts.getPassword(accountId);
       if (!decryptedPassword) {
         throw new Error('Password tidak dapat didekripsi atau kosong.');

@@ -36,19 +36,10 @@ if (require.main === module) {
   app.use('/', express.static(dashboardDir));
 
   // Serve static assets modul absensi
-  app.use('/absen-assets', express.static(moduleExports.frontendDir));
-
-  // Kredensial & Security Hardening untuk login dashboard mandiri
-  const crypto = require('crypto');
-  const tokens = new Map(); // token -> { createdAt: timestamp, lastActivity: timestamp }
-  
-  const DASHBOARD_USER = process.env.ABSEN_DASHBOARD_USER || 'admin';
-  const DASHBOARD_PASS = process.env.ABSEN_DASHBOARD_PASS || 'admin';
-  const DASHBOARD_SALT = process.env.ABSEN_DASHBOARD_SALT || 'absensi_salt_123';
-  
-  // Hash PBKDF2 aman (Timing-safe) untuk verifikasi password admin
-  const storedHash = process.env.ABSEN_DASHBOARD_PASS_HASH || 
-    crypto.pbkdf2Sync(DASHBOARD_PASS, DASHBOARD_SALT, 1000, 64, 'sha512').toString('hex');
+  app.use('/absen-assets', express.static(moduleExports.frontendDir));  // Load Security Services
+  const UserService = require('./services/user-service');
+  const SessionService = require('./services/session-service');
+  const AuditService = require('./services/audit-service');
 
   // Rate Limiting Ringan In-Memory untuk Brute-Force Protection
   const loginAttempts = new Map(); // ip -> { count: number, resetAt: timestamp }
@@ -63,11 +54,11 @@ if (require.main === module) {
       record.resetAt = now + 60 * 1000;
     }
 
-    if (record.count >= 5) {
+    if (record.count >= 10) { // Berikan toleransi sedikit lebih tinggi karena lockout ditangani username
       const waitSecs = Math.round((record.resetAt - now) / 1000);
       return res.status(429).json({
         success: false,
-        error: `Terlalu banyak percobaan login gagal. Silakan coba lagi dalam ${waitSecs} detik.`
+        error: `Terlalu banyak percobaan masuk dari IP ini. Silakan coba lagi dalam ${waitSecs} detik.`
       });
     }
 
@@ -77,84 +68,134 @@ if (require.main === module) {
   }
 
   // API Otentikasi
-  app.post('/api/auth/login', loginRateLimiter, (req, res) => {
-    const { username, password } = req.body || {};
+  app.post('/api/auth/login', loginRateLimiter, async (req, res) => {
+    const { username, password, rememberMe } = req.body || {};
     if (!username || !password) {
       return res.status(400).json({ success: false, error: 'Username dan password wajib diisi!' });
     }
 
-    // Hitung hash PBKDF2 dari password masukan
-    const inputHash = crypto.pbkdf2Sync(password, DASHBOARD_SALT, 1000, 64, 'sha512').toString('hex');
-    
-    const inputUsernameBuffer = Buffer.from(username);
-    const expectedUsernameBuffer = Buffer.from(DASHBOARD_USER);
-    const inputHashBuffer = Buffer.from(inputHash);
-    const expectedHashBuffer = Buffer.from(storedHash);
+    const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
+    const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    // Timing-safe cryptographic comparison
-    const isUsernameMatch = inputUsernameBuffer.length === expectedUsernameBuffer.length &&
-      crypto.timingSafeEqual(inputUsernameBuffer, expectedUsernameBuffer);
-    const isPasswordMatch = inputHashBuffer.length === expectedHashBuffer.length &&
-      crypto.timingSafeEqual(inputHashBuffer, expectedHashBuffer);
-
-    if (isUsernameMatch && isPasswordMatch) {
-      const token = crypto.randomBytes(32).toString('hex');
-      tokens.set(token, {
-        createdAt: Date.now(),
-        lastActivity: Date.now()
-      });
+    try {
+      const authResult = await UserService.verifyPassword(username, password);
       
-      // Clear rate limiting attempts on successful login
-      const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
+      if (!authResult.success) {
+        // Catat audit kegagalan login
+        AuditService.log(null, username, 'GUEST', 'LOGIN_FAILED', 'User Session', authResult.error, ip);
+        return res.status(401).json({ success: false, error: authResult.error });
+      }
+
+      const user = authResult.user;
+      
+      // Buat session token baru
+      const token = await SessionService.createSession(user.id, ip, userAgent, !!rememberMe);
+      
+      // Bersihkan login attempts IP
       loginAttempts.delete(ip);
 
-      return res.json({ success: true, token });
-    }
+      // Catat audit keberhasilan login
+      AuditService.log(user.id, user.username, user.role, 'LOGIN', 'User Session', 'Login sukses ke dashboard', ip);
 
-    return res.status(401).json({ success: false, error: 'Username atau password salah!' });
+      return res.json({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          email: user.email
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ success: false, error: 'Terjadi kesalahan internal server.' });
+    }
   });
 
-  app.get('/api/auth/me', (req, res) => {
+  app.get('/api/auth/me', async (req, res) => {
     const token = req.headers['x-auth-token'];
-    if (token && tokens.has(token)) {
-      const tokenMeta = tokens.get(token);
-      tokenMeta.lastActivity = Date.now();
-      return res.json({ success: true, username: DASHBOARD_USER });
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const session = await SessionService.validateSession(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Ambil data user terbaru dari DB
+    const proxy = require('./routes/absen-proxy');
+    if (proxy.db) {
+      const user = proxy.db.prepare('SELECT id, username, role, email, status, student_account_id FROM users WHERE id = ?').get(session.user_id);
+      if (user && user.status === 'active') {
+        return res.json({
+          success: true,
+          user: {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            email: user.email,
+            student_account_id: user.student_account_id
+          }
+        });
+      }
     }
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   });
 
-  app.post('/api/auth/logout', (req, res) => {
+  app.post('/api/auth/logout', async (req, res) => {
     const token = req.headers['x-auth-token'];
     if (token) {
-      tokens.delete(token);
+      const session = await SessionService.validateSession(token);
+      if (session) {
+        // Log audit logout
+        const proxy = require('./routes/absen-proxy');
+        if (proxy.db) {
+          const user = proxy.db.prepare('SELECT username, role FROM users WHERE id = ?').get(session.user_id);
+          const username = user ? user.username : 'Unknown';
+          const role = user ? user.role : 'Unknown';
+          const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
+          AuditService.log(session.user_id, username, role, 'LOGOUT', 'User Session', 'Logout berhasil', ip);
+        }
+        await SessionService.destroySession(token);
+      }
     }
     res.json({ success: true });
   });
 
-  // Middleware proteksi API pada port 3001 dengan Session Expiration
-  function requireAuth(req, res, next) {
+  // Middleware proteksi API pada port 3001 dengan Session Expiration & Timeout
+  async function requireAuth(req, res, next) {
     const token = req.headers['x-auth-token'];
-    if (!token || !tokens.has(token)) {
+    if (!token) {
       return res.status(401).json({ success: false, message: 'Unauthorized. Harap login terlebih dahulu.' });
     }
 
-    const tokenMeta = tokens.get(token);
-    const now = Date.now();
-    
-    const maxSessionAge = 12 * 60 * 60 * 1000; // 12 Jam Maksimal
-    const maxIdleTime = 30 * 60 * 1000;        // 30 Menit Tidak Aktif
-
-    const sessionAge = now - tokenMeta.createdAt;
-    const idleTime = now - tokenMeta.lastActivity;
-
-    if (sessionAge > maxSessionAge || idleTime > maxIdleTime) {
-      tokens.delete(token);
-      return res.status(401).json({ success: false, message: 'Sesi Anda telah kedaluwarsa karena tidak ada aktivitas. Silakan login kembali.' });
+    const session = await SessionService.validateSession(token);
+    if (!session) {
+      return res.status(401).json({ success: false, message: 'Sesi Anda telah kedaluwarsa atau tidak aktif. Silakan login kembali.' });
     }
 
-    // Perbarui aktivitas terakhir
-    tokenMeta.lastActivity = now;
+    const proxy = require('./routes/absen-proxy');
+    if (!proxy.db) {
+      return res.status(500).json({ success: false, message: 'Koneksi database terputus.' });
+    }
+
+    const user = proxy.db.prepare('SELECT id, username, role, email, status, student_account_id FROM users WHERE id = ?').get(session.user_id);
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Pengguna sesi ini tidak terdaftar.' });
+    }
+
+    if (user.status === 'disabled') {
+      return res.status(403).json({ success: false, message: 'Akun Anda dinonaktifkan oleh administrator.' });
+    }
+
+    if (user.status === 'locked') {
+      return res.status(403).json({ success: false, message: 'Akun Anda sedang terkunci.' });
+    }
+
+    // Pasang metadata user ke request object agar middleware RBAC di route dapat membacanya
+    req.user = user;
     next();
   }
 

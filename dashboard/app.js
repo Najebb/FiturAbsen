@@ -15,22 +15,34 @@ document.addEventListener('DOMContentLoaded', () => {
   // Navigation elements
   const navOverview = document.getElementById('nav-overview');
   const navAccounts = document.getElementById('nav-accounts');
+  const navCalendar = document.getElementById('nav-calendar');
   const navScheduler = document.getElementById('nav-scheduler');
   const navLogs = document.getElementById('nav-logs');
+  const navAnalytics = document.getElementById('nav-analytics');
+  const navAIInsights = document.getElementById('nav-ai-insights');
   const navHealth = document.getElementById('nav-health');
   const navSystemTools = document.getElementById('nav-system-tools');
+  const navUsers = document.getElementById('nav-users');
+  const navSessions = document.getElementById('nav-sessions');
+  const navAuditLogs = document.getElementById('nav-audit-logs');
   const pageTitle = document.getElementById('page-title');
   
   const sections = {
     overview: document.getElementById('page-overview'),
     accounts: document.getElementById('page-accounts'),
+    calendar: document.getElementById('page-calendar'),
     scheduler: document.getElementById('page-scheduler'),
     logs: document.getElementById('page-logs'),
+    analytics: document.getElementById('page-analytics'),
+    'ai-insights': document.getElementById('page-ai-insights'),
     health: document.getElementById('page-health'),
-    'system-tools': document.getElementById('page-system-tools')
+    'system-tools': document.getElementById('page-system-tools'),
+    users: document.getElementById('page-users'),
+    sessions: document.getElementById('page-sessions'),
+    'audit-logs': document.getElementById('page-audit-logs')
   };
 
-  const navItems = [navOverview, navAccounts, navScheduler, navLogs, navHealth, navSystemTools];
+  const navItems = [navOverview, navAccounts, navCalendar, navScheduler, navLogs, navAnalytics, navAIInsights, navHealth, navSystemTools, navUsers, navSessions, navAuditLogs];
 
   // Mobile elements
   const btnSidebarToggle = document.getElementById('btn-sidebar-toggle');
@@ -64,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // --- App State ---
   let authToken = localStorage.getItem('absen_token') || '';
+  let currentUser = null;
   let accountsData = [];
   let logsData = [];
   let schedulerConfigsData = [];
@@ -169,8 +182,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const data = await apiFetch('/api/auth/me');
-      if (data.success) {
-        displayUsername.textContent = data.username;
+      if (data.success && data.user) {
+        currentUser = {
+          username: data.user.username,
+          role: data.user.role,
+          studentAccountId: data.user.student_account_id
+        };
+        displayUsername.textContent = data.user.username;
+        
+        const displayRole = document.querySelector('.user-role');
+        if (displayRole) {
+          displayRole.textContent = data.user.role.replace('_', ' ');
+        }
+        
         showDashboard();
       } else {
         logout();
@@ -185,18 +209,108 @@ document.addEventListener('DOMContentLoaded', () => {
     appLayout.classList.add('hidden');
     clearInterval(healthInterval);
     clearInterval(schedulerPollerInterval);
+
+    // Reset all role-restricted nav item visibility on logout
+    const roleRestrictedNavs = [
+      'nav-users', 'nav-sessions', 'nav-audit-logs',
+      'nav-health', 'nav-system-tools', 'nav-calendar',
+      'nav-analytics', 'nav-ai-insights'
+    ];
+    roleRestrictedNavs.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    });
+
+    // Hide administrative buttons on logout
+    const btnAllAbsen = document.getElementById('btn-run-all-absen');
+    if (btnAllAbsen) btnAllAbsen.classList.add('hidden');
+    const btnAddAccount = document.getElementById('btn-add-account-modal');
+    if (btnAddAccount) btnAddAccount.classList.add('hidden');
   }
 
   function showDashboard() {
     loginScreen.classList.add('hidden');
     appLayout.classList.remove('hidden');
     
+    // Role-based visibility logic
+    if (currentUser) {
+      const role = currentUser.role;
+      const isAdminOrSuper = (role === 'SUPER_ADMIN' || role === 'ADMIN');
+      const isStaffOrAbove = (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'OPERATOR');
+
+      // Users - SUPER_ADMIN only
+      const userNav = document.getElementById('nav-users');
+      if (userNav) {
+        if (role === 'SUPER_ADMIN') userNav.classList.remove('hidden');
+        else userNav.classList.add('hidden');
+      }
+
+      // Sessions & Audit Logs - SUPER_ADMIN and ADMIN
+      const sessionNav = document.getElementById('nav-sessions');
+      const auditNav = document.getElementById('nav-audit-logs');
+      if (sessionNav) {
+        if (isAdminOrSuper) sessionNav.classList.remove('hidden');
+        else sessionNav.classList.add('hidden');
+      }
+      if (auditNav) {
+        if (isAdminOrSuper) auditNav.classList.remove('hidden');
+        else auditNav.classList.add('hidden');
+      }
+
+      // Other administrative pages
+      const healthNav = document.getElementById('nav-health');
+      const toolsNav = document.getElementById('nav-system-tools');
+      const calendarNav = document.getElementById('nav-calendar');
+      const analyticsNav = document.getElementById('nav-analytics');
+      const aiNav = document.getElementById('nav-ai-insights');
+
+      if (healthNav) {
+        if (isStaffOrAbove) healthNav.classList.remove('hidden');
+        else healthNav.classList.add('hidden');
+      }
+      if (toolsNav) {
+        if (isStaffOrAbove) toolsNav.classList.remove('hidden');
+        else toolsNav.classList.add('hidden');
+      }
+      if (calendarNav) {
+        if (isStaffOrAbove) calendarNav.classList.remove('hidden');
+        else calendarNav.classList.add('hidden');
+      }
+      if (analyticsNav) {
+        if (isStaffOrAbove) analyticsNav.classList.remove('hidden');
+        else analyticsNav.classList.add('hidden');
+      }
+      if (aiNav) {
+        if (isStaffOrAbove) aiNav.classList.remove('hidden');
+        else aiNav.classList.add('hidden');
+      }
+
+      // Hide administrative buttons from student role
+      const btnAllAbsen = document.getElementById('btn-run-all-absen');
+      if (btnAllAbsen) {
+        if (isStaffOrAbove) btnAllAbsen.classList.remove('hidden');
+        else btnAllAbsen.classList.add('hidden');
+      }
+      
+      const btnAddAccount = document.getElementById('btn-add-account-modal');
+      if (btnAddAccount) {
+        if (isStaffOrAbove) btnAddAccount.classList.remove('hidden');
+        else btnAddAccount.classList.add('hidden');
+      }
+    }
+    
     // Load state
     loadActiveTab();
     
-    // Start health monitoring checks every 10 seconds
-    fetchHealthData();
-    healthInterval = setInterval(fetchHealthData, 10000);
+    // Start health monitoring checks if appropriate
+    if (currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN' || currentUser.role === 'OPERATOR')) {
+      fetchHealthData();
+      healthInterval = setInterval(fetchHealthData, 10000);
+    } else {
+      // Simple status check without deep stats
+      fetchHealthData();
+      healthInterval = setInterval(fetchHealthData, 30000);
+    }
 
     // Start background status polling for scheduler every 7 seconds
     pollSchedulerStatus();
@@ -220,9 +334,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (data.success && data.token) {
         authToken = data.token;
         localStorage.setItem('absen_token', authToken);
-        displayUsername.textContent = usernameInput.value;
         showToast('Login berhasil!', 'success');
-        showDashboard();
+        await checkAuth();
       } else {
         showToast(data.error || 'Kredensial tidak valid.', 'error');
       }
@@ -255,6 +368,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const hash = window.location.hash.replace('#', '') || 'overview';
     
+    // Check tab permissions
+    if (currentUser) {
+      const role = currentUser.role;
+      const isAdminOrSuper = (role === 'SUPER_ADMIN' || role === 'ADMIN');
+      const isStaffOrAbove = (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'OPERATOR');
+      
+      if (hash === 'users' && role !== 'SUPER_ADMIN') {
+        window.location.hash = 'overview';
+        return;
+      }
+      if ((hash === 'sessions' || hash === 'audit-logs') && !isAdminOrSuper) {
+        window.location.hash = 'overview';
+        return;
+      }
+      if ((hash === 'health' || hash === 'system-tools' || hash === 'calendar' || hash === 'analytics' || hash === 'ai-insights') && !isStaffOrAbove) {
+        window.location.hash = 'overview';
+        return;
+      }
+    }
+    
     // Update active class on side navigations
     navItems.forEach(item => {
       if (item) {
@@ -270,9 +403,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update section view
     Object.keys(sections).forEach(key => {
       if (key === hash) {
-        sections[key].classList.remove('hidden');
+        if (sections[key]) sections[key].classList.remove('hidden');
       } else {
-        sections[key].classList.add('hidden');
+        if (sections[key]) sections[key].classList.add('hidden');
       }
     });
 
@@ -280,10 +413,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const titles = {
       overview: 'Ringkasan',
       accounts: 'Kelola Akun SIMKULIAH',
+      calendar: 'Kalender Akademik & Hari Libur',
       scheduler: 'Auto Attendance Scheduler',
       logs: 'Riwayat Absensi',
+      analytics: 'Analisis & Laporan Kehadiran',
+      'ai-insights': 'AI Insights & Rekomendasi',
       health: 'Health Monitor',
-      'system-tools': 'System Tools & Backups'
+      'system-tools': 'System Tools & Backups',
+      users: 'Security Governance & User Management',
+      sessions: 'Active Sessions Manager',
+      'audit-logs': 'Security Audit Trail'
     };
     pageTitle.textContent = titles[hash] || 'Dashboard';
 
@@ -292,16 +431,28 @@ document.addEventListener('DOMContentLoaded', () => {
       fetchOverviewData();
     } else if (hash === 'accounts') {
       fetchAccountsData();
+    } else if (hash === 'calendar') {
+      fetchCalendarData();
     } else if (hash === 'scheduler') {
       fetchSchedulerConfigs();
       fetchSchedulerHistory();
       pollSchedulerStatus();
     } else if (hash === 'logs') {
       fetchLogsData();
+    } else if (hash === 'analytics') {
+      fetchAnalyticsData();
+    } else if (hash === 'ai-insights') {
+      fetchAIInsightsData();
     } else if (hash === 'health') {
       fetchHealthData();
     } else if (hash === 'system-tools') {
       fetchSystemToolsData();
+    } else if (hash === 'users') {
+      fetchUsersData();
+    } else if (hash === 'sessions') {
+      fetchSessionsData();
+    } else if (hash === 'audit-logs') {
+      fetchAuditLogsData();
     }
   }
 
@@ -382,9 +533,17 @@ document.addEventListener('DOMContentLoaded', () => {
               <td><strong>${escapeHtml(acc.nama)}</strong></td>
               <td><code>${escapeHtml(acc.npm)}</code></td>
               <td>${new Date(acc.created_at).toLocaleString('id-ID')}</td>
-              <td><span class="badge badge-outline-success">Ready</span></td>
+              <td>
+                <label class="switch">
+                  <input type="checkbox" class="toggle-account-active" data-id="${acc.id}" ${acc.is_active !== 0 ? 'checked' : ''}>
+                  <span class="slider"></span>
+                </label>
+              </td>
               <td>
                 <div class="action-buttons">
+                  <button class="btn btn-secondary btn-sm btn-weekly-rules" data-id="${acc.id}">
+                    <i data-lucide="calendar-range" class="btn-icon-inline"></i> Smart Rules
+                  </button>
                   <button class="btn btn-primary btn-sm btn-test-absen" data-id="${acc.id}">
                     <i data-lucide="play" class="btn-icon-inline"></i> Jalankan Absen
                   </button>
@@ -398,6 +557,32 @@ document.addEventListener('DOMContentLoaded', () => {
           });
 
           // Bind event listeners
+          document.querySelectorAll('.toggle-account-active').forEach(checkbox => {
+            checkbox.addEventListener('change', async () => {
+              const id = checkbox.dataset.id;
+              const isActive = checkbox.checked ? 1 : 0;
+              try {
+                const res = await apiFetch(`/api/accounts/${id}/toggle-active`, {
+                  method: 'POST',
+                  body: JSON.stringify({ is_active: isActive })
+                });
+                if (res.success) {
+                  showToast(`Akun berhasil ${isActive ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
+                } else {
+                  showToast('Gagal mengubah status keaktifan akun.', 'error');
+                  checkbox.checked = !checkbox.checked;
+                }
+              } catch (err) {
+                showToast('Gagal mengubah status keaktifan akun.', 'error');
+                checkbox.checked = !checkbox.checked;
+              }
+            });
+          });
+
+          document.querySelectorAll('.btn-weekly-rules').forEach(btn => {
+            btn.addEventListener('click', () => openWeeklyRulesModal(btn.dataset.id));
+          });
+
           document.querySelectorAll('.btn-test-absen').forEach(btn => {
             btn.addEventListener('click', () => runSingleAbsen(btn.dataset.id, btn));
           });
@@ -1139,6 +1324,1341 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {
       showToast('Gagal membuat backup.', 'error');
+    }
+  });
+
+  // ==================== ACADEMIC CALENDAR & SMART RULES LOGIC ====================
+  let localHolidays = [];
+  let localBreaks = [];
+
+  // Fetch Calendar and Holidays
+  async function fetchCalendarData() {
+    try {
+      const res = await apiFetch('/api/calendar');
+      if (res.success && res.data) {
+        const { holidays, calendar } = res.data;
+        localHolidays = holidays || [];
+        localBreaks = (calendar && calendar.semester_breaks) || [];
+
+        // Set inputs
+        document.getElementById('cal-sem-start').value = (calendar && calendar.semester_start) || '';
+        document.getElementById('cal-sem-end').value = (calendar && calendar.semester_end) || '';
+
+        // Render lists
+        renderLocalHolidays();
+        renderLocalBreaks();
+      }
+    } catch (e) {
+      showToast('Gagal memuat kalender akademik.', 'error');
+    }
+  }
+
+  function renderLocalHolidays() {
+    const container = document.getElementById('holidays-list-manager');
+    container.innerHTML = '';
+
+    if (localHolidays.length === 0) {
+      container.innerHTML = '<div class="text-muted text-center" style="font-size:12px; padding:12px;">Belum ada hari libur nasional ditambahkan.</div>';
+      return;
+    }
+
+    localHolidays.sort((a, b) => a.date.localeCompare(b.date)).forEach((h, idx) => {
+      const div = document.createElement('div');
+      div.className = 'list-manager-item';
+      div.innerHTML = `
+        <span style="flex-grow:1; font-size:13px; color: var(--text-primary);">
+          <strong>${escapeHtml(h.name)}</strong> <span style="color: var(--text-secondary); margin-left: 8px;">(${escapeHtml(h.date)})</span>
+        </span>
+        <button type="button" class="btn btn-danger btn-xs btn-remove-holiday" data-idx="${idx}" style="padding: 6px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; height: 28px; width: 28px;">
+          <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
+        </button>
+      `;
+      container.appendChild(div);
+    });
+
+    document.querySelectorAll('.btn-remove-holiday').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = Number(e.currentTarget.dataset.idx);
+        localHolidays.splice(idx, 1);
+        renderLocalHolidays();
+      });
+    });
+
+    lucide.createIcons();
+  }
+
+  function renderLocalBreaks() {
+    const container = document.getElementById('breaks-list-manager');
+    container.innerHTML = '';
+
+    if (localBreaks.length === 0) {
+      container.innerHTML = '<div class="text-muted text-center" style="font-size:12px; padding:12px;">Belum ada libur semester ditambahkan.</div>';
+      return;
+    }
+
+    localBreaks.sort((a, b) => a.start.localeCompare(b.start)).forEach((b, idx) => {
+      const div = document.createElement('div');
+      div.className = 'list-manager-item';
+      div.innerHTML = `
+        <span style="flex-grow:1; font-size:13px; color: var(--text-primary);">
+          <strong>${escapeHtml(b.name)}</strong> <span style="color: var(--text-secondary); margin-left: 8px;">(${escapeHtml(b.start)} s/d ${escapeHtml(b.end)})</span>
+        </span>
+        <button type="button" class="btn btn-danger btn-xs btn-remove-break" data-idx="${idx}" style="padding: 6px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; height: 28px; width: 28px;">
+          <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
+        </button>
+      `;
+      container.appendChild(div);
+    });
+
+    document.querySelectorAll('.btn-remove-break').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = Number(e.currentTarget.dataset.idx);
+        localBreaks.splice(idx, 1);
+        renderLocalBreaks();
+      });
+    });
+
+    lucide.createIcons();
+  }
+
+  // Add holiday handler
+  document.getElementById('btn-add-holiday').addEventListener('click', () => {
+    const nameInput = document.getElementById('holiday-name-input');
+    const dateInput = document.getElementById('holiday-date-input');
+
+    const name = nameInput.value.trim();
+    const date = dateInput.value;
+
+    if (!name || !date) {
+      showToast('Mohon isi nama libur dan tanggal dengan lengkap.', 'error');
+      return;
+    }
+
+    // Check duplicate
+    if (localHolidays.some(h => h.date === date)) {
+      showToast('Tanggal libur ini sudah ada dalam daftar.', 'error');
+      return;
+    }
+
+    localHolidays.push({ name, date });
+    nameInput.value = '';
+    dateInput.value = '';
+    renderLocalHolidays();
+    showToast('Hari libur nasional berhasil ditambahkan ke daftar lokal.', 'success');
+  });
+
+  // Add break handler
+  document.getElementById('btn-add-break').addEventListener('click', () => {
+    const nameInput = document.getElementById('break-name-input');
+    const startInput = document.getElementById('break-start-input');
+    const endInput = document.getElementById('break-end-input');
+
+    const name = nameInput.value.trim();
+    const start = startInput.value;
+    const end = endInput.value;
+
+    if (!name || !start || !end) {
+      showToast('Mohon isi nama libur semester dan rentang tanggal lengkap.', 'error');
+      return;
+    }
+
+    if (start > end) {
+      showToast('Tanggal selesai tidak boleh sebelum tanggal mulai.', 'error');
+      return;
+    }
+
+    localBreaks.push({ name, start, end });
+    nameInput.value = '';
+    startInput.value = '';
+    endInput.value = '';
+    renderLocalBreaks();
+    showToast('Libur semester berhasil ditambahkan ke daftar lokal.', 'success');
+  });
+
+  // Save calendar to server
+  document.getElementById('btn-save-calendar').addEventListener('click', async () => {
+    const semStart = document.getElementById('cal-sem-start').value;
+    const semEnd = document.getElementById('cal-sem-end').value;
+
+    if (semStart && semEnd && semStart > semEnd) {
+      showToast('Rentang tanggal semester aktif tidak valid.', 'error');
+      return;
+    }
+
+    try {
+      showToast('Menyimpan data kalender akademik...', 'info');
+      const res = await apiFetch('/api/calendar', {
+        method: 'POST',
+        body: JSON.stringify({
+          holidays: localHolidays,
+          calendar: {
+            semester_start: semStart,
+            semester_end: semEnd,
+            semester_breaks: localBreaks
+          }
+        })
+      });
+
+      if (res.success) {
+        showToast('Kalender akademik dan hari libur berhasil disimpan!', 'success');
+        fetchCalendarData();
+      } else {
+        showToast(res.message || 'Gagal menyimpan kalender akademik.', 'error');
+      }
+    } catch (e) {
+      showToast('Gagal menyimpan kalender akademik.', 'error');
+    }
+  });
+
+  // ==================== WEEKLY RULES MODAL FUNCTIONS ====================
+  const rulesModal = document.getElementById('rules-modal');
+  const btnRulesModalClose = document.getElementById('btn-rules-modal-close');
+  const btnRulesModalCancel = document.getElementById('btn-rules-modal-cancel');
+  const rulesForm = document.getElementById('rules-form');
+
+  async function openWeeklyRulesModal(accountId) {
+    document.getElementById('rules-account-id').value = accountId;
+    
+    // Pastikan data kalender ter-load agar local preview bekerja
+    if (localHolidays.length === 0) {
+      try {
+        const res = await apiFetch('/api/calendar');
+        if (res.success && res.data) {
+          localHolidays = res.data.holidays || [];
+          localBreaks = (res.data.calendar && res.data.calendar.semester_breaks) || [];
+        }
+      } catch (e) {
+        console.warn('Gagal preload kalender untuk rules modal preview:', e);
+      }
+    }
+
+    try {
+      showToast('Memuat aturan mingguan...', 'info');
+      const res = await apiFetch(`/api/rules/${accountId}`);
+      if (res.success && res.data) {
+        const rules = res.data.rules || [];
+        const daysContainer = document.getElementById('rules-days-container');
+        daysContainer.innerHTML = '';
+
+        rules.forEach(day => {
+          const div = document.createElement('div');
+          div.className = 'rule-day-row';
+          div.dataset.day = day.day_of_week;
+          div.innerHTML = `
+            <span class="day-label">${escapeHtml(day.day_name)}</span>
+            <label class="switch">
+              <input type="checkbox" class="day-enabled" ${day.is_enabled === 1 ? 'checked' : ''}>
+              <span class="slider"></span>
+            </label>
+            <input type="text" class="form-input day-slots" placeholder="Jam eksekusi, misal: 07:30, 13:40" value="${escapeHtml(day.time_slots)}">
+          `;
+          daysContainer.appendChild(div);
+        });
+
+        // Set up real-time live preview update on edit
+        document.querySelectorAll('#rules-days-container input').forEach(input => {
+          input.addEventListener('input', simulateRulesPreviewLocally);
+          input.addEventListener('change', simulateRulesPreviewLocally);
+        });
+
+        simulateRulesPreviewLocally();
+        rulesModal.classList.remove('hidden');
+        lucide.createIcons();
+      }
+    } catch (e) {
+      showToast('Gagal memuat aturan mingguan.', 'error');
+    }
+  }
+
+  function simulateRulesPreviewLocally() {
+    const rows = document.querySelectorAll('#rules-days-container .rule-day-row');
+    const draftRules = [];
+    rows.forEach(row => {
+      const dayOfWeek = Number(row.dataset.day);
+      const isEnabled = row.querySelector('.day-enabled').checked ? 1 : 0;
+      const timeSlots = row.querySelector('.day-slots').value;
+      draftRules.push({ day_of_week: dayOfWeek, is_enabled: isEnabled, time_slots: timeSlots });
+    });
+
+    const previewContainer = document.getElementById('rules-preview-container');
+    previewContainer.innerHTML = '';
+
+    const semStart = document.getElementById('cal-sem-start').value;
+    const semEnd = document.getElementById('cal-sem-end').value;
+
+    const now = new Date();
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const previewList = [];
+
+    const currentAccountId = Number(document.getElementById('rules-account-id').value);
+    const acc = accountsData.find(a => a.id === currentAccountId);
+    const isAccountInactive = acc && acc.is_active === 0;
+
+    for (let i = 0; i < 7; i++) {
+      const targetDate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+      const dayOfWeek = targetDate.getDay();
+      
+      const y = targetDate.getFullYear();
+      const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+      const d = String(targetDate.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+
+      const ruleMatch = draftRules.find(r => r.day_of_week === dayOfWeek && r.is_enabled === 1 && r.time_slots !== '');
+      if (ruleMatch) {
+        const slots = ruleMatch.time_slots
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(s));
+
+        for (const slot of slots) {
+          let skipped = false;
+          let reason = '';
+
+          if (isAccountInactive) {
+            skipped = true;
+            reason = 'Akun mahasiswa dinonaktifkan.';
+          } else {
+            const hol = localHolidays.find(h => h.date === dateStr);
+            const brk = localBreaks.find(b => dateStr >= b.start && dateStr <= b.end);
+            const isOutside = (semStart && dateStr < semStart) || (semEnd && dateStr > semEnd);
+
+            if (hol) {
+              skipped = true;
+              reason = `Hari Libur Nasional: ${hol.name}`;
+            } else if (brk) {
+              skipped = true;
+              reason = `Masa Libur Semester: ${brk.name}`;
+            } else if (isOutside) {
+              skipped = true;
+              reason = 'Di luar masa aktif perkuliahan semester.';
+            }
+          }
+
+          previewList.push({
+            date: dateStr,
+            time: slot,
+            day_name: days[dayOfWeek],
+            timestamp: new Date(`${dateStr}T${slot}:00`).getTime(),
+            skipped,
+            reason
+          });
+        }
+      }
+    }
+
+    previewList.sort((a, b) => a.timestamp - b.timestamp);
+
+    if (previewList.length === 0) {
+      previewContainer.innerHTML = '<div class="text-muted text-center" style="font-size:12px; padding:12px;">Tidak ada jadwal eksekusi terdeteksi untuk 7 hari ke depan. Tambahkan jam pada hari aktif di atas!</div>';
+    } else {
+      previewList.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'preview-item';
+        div.innerHTML = `
+          <div class="preview-item-left">
+            <span class="preview-item-date">${escapeHtml(item.day_name)}, ${escapeHtml(item.date)} Pukul <strong>${escapeHtml(item.time)}</strong></span>
+            ${item.skipped ? `<span class="preview-item-reason">${escapeHtml(item.reason)}</span>` : ''}
+          </div>
+          <span class="badge ${item.skipped ? 'badge-skipped' : 'badge-run'}">${item.skipped ? 'SKIP' : 'RUN'}</span>
+        `;
+        previewContainer.appendChild(div);
+      });
+    }
+  }
+
+  // Save Rules handler
+  rulesForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const accountId = Number(document.getElementById('rules-account-id').value);
+    
+    const rows = document.querySelectorAll('#rules-days-container .rule-day-row');
+    const rules = [];
+    rows.forEach(row => {
+      const dayOfWeek = Number(row.dataset.day);
+      const isEnabled = row.querySelector('.day-enabled').checked ? 1 : 0;
+      const timeSlots = row.querySelector('.day-slots').value.trim();
+      rules.push({ day_of_week: dayOfWeek, is_enabled: isEnabled, time_slots: timeSlots });
+    });
+
+    try {
+      showToast('Menyimpan aturan penjadwalan...', 'info');
+      const res = await apiFetch(`/api/rules/${accountId}`, {
+        method: 'POST',
+        body: JSON.stringify({ rules })
+      });
+
+      if (res.success) {
+        showToast('Aturan mingguan (Smart Rules) berhasil disimpan & disinkronkan!', 'success');
+        rulesModal.classList.add('hidden');
+        if (window.location.hash === '#scheduler') {
+          fetchSchedulerConfigs();
+        }
+      } else {
+        showToast(res.message || 'Gagal menyimpan aturan.', 'error');
+      }
+    } catch (err) {
+      showToast('Gagal menyimpan aturan penjadwalan.', 'error');
+    }
+  });
+
+  // Modal close handlers
+  btnRulesModalClose.addEventListener('click', () => rulesModal.classList.add('hidden'));
+  btnRulesModalCancel.addEventListener('click', () => rulesModal.classList.add('hidden'));
+
+  // ==================== ATTENDANCE ANALYTICS LOGIC ====================
+  let trendsChartInstance = null;
+  let reasonsChartInstance = null;
+
+  async function fetchAnalyticsData() {
+    try {
+      showToast('Memuat data analisis...', 'info');
+      
+      // 1. Fetch Overview Metrics & Warnings
+      const overviewRes = await apiFetch('/api/analytics/overview');
+      if (overviewRes.success && overviewRes.data) {
+        const d = overviewRes.data;
+        document.getElementById('analytic-total-execs').textContent = d.totalExecutions;
+        document.getElementById('analytic-success-rate').textContent = `${d.successRate}%`;
+        document.getElementById('analytic-failed-count').textContent = d.failedCount;
+        document.getElementById('analytic-skipped-count').textContent = d.skippedCount;
+
+        // Alerts container
+        const warningPanel = document.getElementById('analytic-warning-panel');
+        const alertsContainer = document.getElementById('analytic-alerts-container');
+        alertsContainer.innerHTML = '';
+
+        if (d.alerts && d.alerts.length > 0) {
+          warningPanel.classList.remove('hidden');
+          d.alerts.forEach(alert => {
+            const div = document.createElement('div');
+            div.className = `ews-alert-banner ${alert.type}`;
+            div.innerHTML = `
+              <i data-lucide="${alert.type === 'danger' ? 'alert-octagon' : 'alert-triangle'}" class="text-${alert.type === 'danger' ? 'red' : 'yellow'}" style="margin-top: 2px; width: 18px; height: 18px;"></i>
+              <div>
+                <div class="ews-alert-title ${alert.type}">${escapeHtml(alert.title)}</div>
+                <div class="ews-alert-message">${escapeHtml(alert.message)}</div>
+              </div>
+            `;
+            alertsContainer.appendChild(div);
+          });
+          lucide.createIcons();
+        } else {
+          warningPanel.classList.add('hidden');
+        }
+      }
+
+      // 2. Fetch Trend Data based on Selected Range
+      const range = document.getElementById('analytic-trend-range').value;
+      const trendsRes = await apiFetch(`/api/analytics/trends?days=${range}`);
+      if (trendsRes.success && trendsRes.data) {
+        const d = trendsRes.data;
+        renderTrendsChart(d.labels, d.successData, d.failedData, d.skippedData);
+      }
+
+      // 3. Fetch Failures & Reasons
+      const failuresRes = await apiFetch('/api/analytics/failures');
+      if (failuresRes.success && failuresRes.data) {
+        const d = failuresRes.data;
+        
+        // Populate top failed table
+        const tbody = document.getElementById('analytic-top-failures-tbody');
+        tbody.innerHTML = '';
+        if (d.topFailedAccounts.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted" style="padding: 12px;">Tidak ada catatan kegagalan sistem.</td></tr>';
+        } else {
+          d.topFailedAccounts.forEach(acc => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td><strong>${escapeHtml(acc.nama)}</strong></td>
+              <td><code>${escapeHtml(acc.npm)}</code></td>
+              <td class="text-red" style="font-weight: 600;">${acc.failureCount} Kali</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+
+        // Render Pie Chart for Reasons
+        renderReasonsChart(d.failureReasons);
+      }
+    } catch (e) {
+      showToast('Gagal memuat data analitik.', 'error');
+    }
+  }
+
+  function renderTrendsChart(labels, success, failed, skipped) {
+    const canvas = document.getElementById('chart-trends');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    if (trendsChartInstance) {
+      trendsChartInstance.destroy();
+    }
+
+    trendsChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Sukses',
+            data: success,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+            borderWidth: 2,
+            tension: 0.25,
+            fill: true
+          },
+          {
+            label: 'Gagal',
+            data: failed,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            borderWidth: 2,
+            tension: 0.25,
+            fill: true
+          },
+          {
+            label: 'Dilewati',
+            data: skipped,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.08)',
+            borderWidth: 2,
+            tension: 0.25,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: {
+              color: '#9ca3af',
+              font: { family: 'Inter', size: 11 }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(75, 85, 99, 0.15)' },
+            ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 } }
+          },
+          y: {
+            grid: { color: 'rgba(75, 85, 99, 0.15)' },
+            ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 }, stepSize: 1 }
+          }
+        }
+      }
+    });
+  }
+
+  function renderReasonsChart(reasons) {
+    const canvas = document.getElementById('chart-reasons');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    if (reasonsChartInstance) {
+      reasonsChartInstance.destroy();
+    }
+
+    if (reasons.length === 0) {
+      reasonsChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Tidak Ada Hambatan'],
+          datasets: [{
+            data: [1],
+            backgroundColor: ['rgba(75, 85, 99, 0.2)'],
+            borderWidth: 1,
+            borderColor: '#1f2937'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          }
+        }
+      });
+      return;
+    }
+
+    const labels = reasons.map(r => r.reason);
+    const data = reasons.map(r => r.count);
+    const colors = ['#f87171', '#fbbf24', '#60a5fa', '#f472b6', '#a78bfa', '#9ca3af'];
+
+    reasonsChartInstance = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: data,
+          backgroundColor: colors.slice(0, labels.length),
+          borderWidth: 1,
+          borderColor: '#1f2937'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: {
+              color: '#9ca3af',
+              font: { family: 'Inter', size: 10 }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  async function downloadReportFile(format) {
+    const days = document.getElementById('analytic-report-days').value;
+    try {
+      showToast('Menghasilkan berkas laporan...', 'info');
+      const response = await fetch(`/api/analytics/reports?format=${format}&days=${days}`, {
+        method: 'GET',
+        headers: {
+          'x-auth-token': authToken
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Gagal menghasilkan laporan.');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      
+      const disposition = response.headers.get('Content-Disposition');
+      let filename = `Laporan_Kehadiran_Last_${days}_Hari.${format === 'pdf' ? 'pdf' : 'csv'}`;
+      if (disposition && disposition.indexOf('attachment') !== -1) {
+        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+        const matches = filenameRegex.exec(disposition);
+        if (matches != null && matches[1]) { 
+          filename = matches[1].replace(/['"]/g, '');
+        }
+      }
+
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      showToast('Laporan berhasil diunduh!', 'success');
+    } catch (e) {
+      showToast('Gagal mengunduh laporan rekap kehadiran.', 'error');
+    }
+  }
+
+  // Bind dropdown & button events for Analytics
+  document.getElementById('analytic-trend-range').addEventListener('change', () => {
+    const range = document.getElementById('analytic-trend-range').value;
+    apiFetch(`/api/analytics/trends?days=${range}`)
+      .then(res => {
+        if (res.success && res.data) {
+          const d = res.data;
+          renderTrendsChart(d.labels, d.successData, d.failedData, d.skippedData);
+        }
+      })
+      .catch(() => showToast('Gagal memuat tren terbaru.', 'error'));
+  });
+
+  document.getElementById('btn-export-excel').addEventListener('click', () => downloadReportFile('excel'));
+  document.getElementById('btn-export-pdf').addEventListener('click', () => downloadReportFile('pdf'));
+
+  // --- AI Insights Data Fetching & Rendering ---
+  let activeAICategory = 'accounts';
+
+  async function fetchAIInsightsData() {
+    try {
+      const overviewRes = await apiFetch('/api/ai-insights/overview');
+      if (overviewRes.success && overviewRes.data) {
+        renderAIOverview(overviewRes.data);
+      }
+      fetchAICategoryData(activeAICategory);
+    } catch (e) {
+      showToast('Gagal memuat AI Insights.', 'error');
+    }
+  }
+
+  function renderAIOverview(data) {
+    const { riskAssessment, executiveSummary, lastUpdated, topIssues } = data;
+
+    const timeSpan = document.getElementById('ai-cache-time');
+    if (timeSpan && lastUpdated) {
+      const date = new Date(lastUpdated);
+      timeSpan.textContent = date.toLocaleTimeString('id-ID') + ' WIB';
+    }
+
+    const execText = document.getElementById('ai-exec-summary-text');
+    if (execText) {
+      execText.textContent = executiveSummary;
+    }
+
+    const riskScoreEl = document.getElementById('ai-risk-score');
+    if (riskScoreEl) {
+      riskScoreEl.textContent = riskAssessment.score;
+      const score = riskAssessment.score;
+      if (score >= 60) {
+        riskScoreEl.style.color = '#ef4444';
+      } else if (score >= 25) {
+        riskScoreEl.style.color = '#f97316';
+      } else if (score > 0) {
+        riskScoreEl.style.color = '#eab308';
+      } else {
+        riskScoreEl.style.color = '#10b981';
+      }
+    }
+
+    const riskLevelEl = document.getElementById('ai-risk-level');
+    if (riskLevelEl) {
+      riskLevelEl.textContent = riskAssessment.level;
+      riskLevelEl.className = 'font-outfit ' + riskAssessment.statusClass;
+    }
+
+    const riskDescEl = document.getElementById('ai-risk-desc');
+    if (riskDescEl) {
+      riskDescEl.textContent = riskAssessment.description;
+    }
+
+    document.getElementById('ai-count-critical').textContent = riskAssessment.counts.critical;
+    document.getElementById('ai-count-high').textContent = riskAssessment.counts.high;
+    document.getElementById('ai-count-medium').textContent = riskAssessment.counts.medium;
+    document.getElementById('ai-count-low').textContent = riskAssessment.counts.low;
+
+    const topContainer = document.getElementById('ai-top-issues-container');
+    if (topContainer) {
+      topContainer.innerHTML = '';
+      if (!topIssues || topIssues.length === 0) {
+        topContainer.innerHTML = `
+          <div class="text-muted" style="text-align: center; padding: 24px; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <i data-lucide="shield-check" style="width: 32px; height: 32px; color: #16a34a;"></i>
+            <div>Tidak ada isu kritis atau tinggi aktif. Sistem dalam status optimal.</div>
+          </div>
+        `;
+      } else {
+        topIssues.forEach(issue => {
+          topContainer.appendChild(createAIInsightCard(issue));
+        });
+      }
+    }
+    if (window.lucide) lucide.createIcons();
+  }
+
+  async function fetchAICategoryData(category) {
+    const container = document.getElementById('ai-categorized-issues');
+    if (!container) return;
+
+    container.innerHTML = '<div class="text-muted" style="padding: 16px;">Memuat rincian kategori...</div>';
+
+    try {
+      const res = await apiFetch(`/api/ai-insights/${category}`);
+      if (res.success && res.data) {
+        const insights = res.data.insights || [];
+        container.innerHTML = '';
+
+        if (insights.length === 0) {
+          container.innerHTML = `
+            <div class="text-muted" style="padding: 24px; text-align: center; font-size: 13px;">
+              Tidak ada isu atau rekomendasi dalam kategori ini.
+            </div>
+          `;
+        } else {
+          insights.forEach(issue => {
+            container.appendChild(createAIInsightCard(issue));
+          });
+        }
+
+        if (window.lucide) lucide.createIcons();
+      }
+    } catch (e) {
+      container.innerHTML = '<div class="text-red" style="padding: 16px;">Gagal memuat rincian kategori.</div>';
+    }
+  }
+
+  function createAIInsightCard(issue) {
+    const div = document.createElement('div');
+    div.className = 'ai-issue-card';
+
+    const sevClass = String(issue.severity || 'low').toLowerCase();
+    let iconName = 'info';
+    if (sevClass === 'critical') iconName = 'alert-octagon';
+    if (sevClass === 'high') iconName = 'alert-triangle';
+    if (sevClass === 'medium') iconName = 'zap';
+
+    div.innerHTML = `
+      <div class="ai-issue-header">
+        <span class="ai-issue-title">
+          <i data-lucide="${iconName}" class="${
+            sevClass === 'critical' ? 'text-red' : 
+            sevClass === 'high' ? 'text-orange' : 
+            sevClass === 'medium' ? 'text-yellow' : 'text-cyan'
+          }"></i>
+          ${issue.title}
+        </span>
+        <span class="badge-severity ${sevClass}">${issue.severity}</span>
+      </div>
+      <div class="ai-issue-desc">${issue.message}</div>
+      <div class="ai-issue-reason">
+        <strong>Bukti/Alasan:</strong> ${issue.reason}
+      </div>
+      <div class="ai-issue-recom">
+        <i data-lucide="check-square" style="width: 15px; height: 15px; color: #06b6d4;"></i>
+        <span><strong>Rekomendasi Tindakan:</strong> ${issue.recommendation}</span>
+      </div>
+    `;
+
+    return div;
+  }
+
+  async function downloadAIReport(period) {
+    try {
+      showToast(`Mengunduh Laporan ${period.toUpperCase()}...`, 'info');
+      const response = await fetch(`/api/ai-insights/reports?period=${period}`, {
+        headers: { 'x-auth-token': authToken }
+      });
+
+      if (!response.ok) throw new Error('Download failed');
+
+      const blob = await response.blob();
+      const a = document.createElement('a');
+      const url = window.URL.createObjectURL(blob);
+      a.href = url;
+
+      let filename = `AI_Insights_Report_${period.toUpperCase()}.md`;
+      const disposition = response.headers.get('content-disposition');
+      if (disposition && disposition.indexOf('attachment') !== -1) {
+        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+        const matches = filenameRegex.exec(disposition);
+        if (matches != null && matches[1]) { 
+          filename = matches[1].replace(/['"]/g, '');
+        }
+      }
+
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      showToast('Laporan AI berhasil diunduh!', 'success');
+    } catch (e) {
+      showToast('Gagal mengunduh laporan AI.', 'error');
+    }
+  }
+
+  const btnAIRefresh = document.getElementById('btn-ai-refresh');
+  if (btnAIRefresh) {
+    btnAIRefresh.addEventListener('click', async () => {
+      btnAIRefresh.disabled = true;
+      btnAIRefresh.innerHTML = '<i class="animate-spin" data-lucide="loader"></i> Memproses...';
+      if (window.lucide) lucide.createIcons();
+
+      try {
+        const data = await apiFetch('/api/ai-insights/refresh', { method: 'POST' });
+        
+        if (data.success) {
+          showToast('Analisis otomatis berhasil diperbarui!', 'success');
+          renderAIOverview(data.data);
+          fetchAICategoryData(activeAICategory);
+        } else {
+          showToast('Gagal memperbarui analisis.', 'error');
+        }
+      } catch (err) {
+        showToast('Gagal memperbarui analisis.', 'error');
+      } finally {
+        btnAIRefresh.disabled = false;
+        btnAIRefresh.innerHTML = '<i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> Perbarui Analisis';
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
+
+  document.querySelectorAll('.tab-btn-ai').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.tab-btn-ai').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      activeAICategory = e.target.getAttribute('data-category');
+      fetchAICategoryData(activeAICategory);
+    });
+  });
+
+  document.querySelectorAll('.btn-ai-report').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const period = e.currentTarget.getAttribute('data-period');
+      downloadAIReport(period);
+    });
+  });
+
+  // ==================== SECURITY GOVERNANCE & USER MANAGEMENT LOGIC ====================
+  let auditLogsData = [];
+
+  // --- Fetch Users ---
+  async function fetchUsersData() {
+    try {
+      const result = await apiFetch('/api/users');
+      if (result.success) {
+        const users = result.data || [];
+        const tbody = document.getElementById('users-list-body');
+        tbody.innerHTML = '';
+
+        if (users.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Belum ada pengguna terdaftar.</td></tr>`;
+          return;
+        }
+
+        users.forEach(user => {
+          const tr = document.createElement('tr');
+          const isMe = currentUser && currentUser.username === user.username;
+          
+          tr.innerHTML = `
+            <td><strong>${escapeHtml(user.username)}</strong> ${isMe ? '<span class="badge badge-outline-success">Anda</span>' : ''}</td>
+            <td>${escapeHtml(user.email || '-')}</td>
+            <td><span class="badge-role ${String(user.role).toLowerCase()}">${escapeHtml(user.role)}</span></td>
+            <td><span class="badge-status ${String(user.status || 'ACTIVE').toLowerCase()}">${escapeHtml(user.status || 'ACTIVE')}</span></td>
+            <td><code>${escapeHtml(user.student_account_npm || user.student_account_id || '-')}</code></td>
+            <td style="text-align: center;">
+              <div class="action-buttons" style="justify-content: center;">
+                <button class="btn btn-secondary btn-sm btn-edit-user" data-id="${user.id}">
+                  <i data-lucide="edit-3" class="btn-icon-inline"></i> Edit
+                </button>
+                <button class="btn btn-secondary btn-sm btn-reset-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}">
+                  <i data-lucide="key" class="btn-icon-inline"></i> Reset
+                </button>
+                <button class="btn btn-danger btn-sm btn-delete-user" data-id="${user.id}" ${isMe ? 'disabled' : ''}>
+                  <i data-lucide="trash-2" class="btn-icon-inline"></i> Hapus
+                </button>
+              </div>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        // Event listeners
+        document.querySelectorAll('.btn-edit-user').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const userId = btn.dataset.id;
+            const user = users.find(u => u.id == userId);
+            if (user) openEditUserModal(user);
+          });
+        });
+
+        document.querySelectorAll('.btn-reset-user').forEach(btn => {
+          btn.addEventListener('click', () => {
+            openResetPasswordModal(btn.dataset.id, btn.dataset.username);
+          });
+        });
+
+        document.querySelectorAll('.btn-delete-user').forEach(btn => {
+          btn.addEventListener('click', () => {
+            deleteUser(btn.dataset.id);
+          });
+        });
+
+        if (window.lucide) lucide.createIcons();
+      }
+    } catch (e) {
+      showToast('Gagal memuat daftar pengguna.', 'error');
+    }
+  }
+
+  // --- Fetch Sessions ---
+  async function fetchSessionsData() {
+    try {
+      const result = await apiFetch('/api/sessions');
+      if (result.success) {
+        const sessions = result.data || [];
+        const tbody = document.getElementById('sessions-list-body');
+        tbody.innerHTML = '';
+
+        if (sessions.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Belum ada sesi aktif.</td></tr>`;
+          return;
+        }
+
+        sessions.forEach(sess => {
+          const tr = document.createElement('tr');
+          const isCurrent = sess.is_current === 1;
+          
+          tr.innerHTML = `
+            <td>
+              <strong>${escapeHtml(sess.username)}</strong>
+              ${isCurrent ? '<span class="badge badge-success" style="font-size: 9px; padding: 2px 6px;">Sesi Ini</span>' : ''}
+            </td>
+            <td><code>${escapeHtml(sess.ip_address)}</code></td>
+            <td><small class="text-muted" title="${escapeHtml(sess.user_agent)}">${escapeHtml(truncateUserAgent(sess.user_agent))}</small></td>
+            <td>${new Date(sess.created_at).toLocaleString('id-ID')}</td>
+            <td>${formatRelativeTime(sess.last_active_at)}</td>
+            <td style="text-align: center;">
+              <button class="btn btn-danger btn-xs btn-revoke-session" data-token="${escapeHtml(sess.session_token)}" ${isCurrent ? 'disabled style="opacity: 0.5;"' : ''}>
+                Putuskan
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        document.querySelectorAll('.btn-revoke-session').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const token = btn.dataset.token;
+            if (confirm('Apakah Anda yakin ingin memutuskan paksa sesi pengguna ini?')) {
+              try {
+                const res = await apiFetch(`/api/sessions/${encodeURIComponent(token)}`, { method: 'DELETE' });
+                if (res.success) {
+                  showToast('Sesi berhasil diputuskan.', 'success');
+                  fetchSessionsData();
+                } else {
+                  showToast(res.message || 'Gagal memutuskan sesi.', 'error');
+                }
+              } catch (err) {
+                showToast('Gagal memutuskan sesi.', 'error');
+              }
+            }
+          });
+        });
+      }
+    } catch (e) {
+      showToast('Gagal memuat sesi aktif.', 'error');
+    }
+  }
+
+  function truncateUserAgent(ua) {
+    if (!ua) return 'Unknown';
+    if (ua.includes('Firefox/')) return 'Firefox Browser';
+    if (ua.includes('Chrome/')) return 'Chrome Browser';
+    if (ua.includes('Safari/')) return 'Safari Browser';
+    if (ua.includes('Edge/')) return 'Edge Browser';
+    return ua.substring(0, 30) + '...';
+  }
+
+  // --- Fetch Audit Logs ---
+  async function fetchAuditLogsData() {
+    try {
+      const result = await apiFetch('/api/audit-logs');
+      if (result.success) {
+        auditLogsData = result.data || [];
+        renderAuditLogsTable(auditLogsData);
+      }
+    } catch (e) {
+      showToast('Gagal memuat log audit.', 'error');
+    }
+  }
+
+  function renderAuditLogsTable(logs) {
+    const tbody = document.getElementById('audit-logs-list-body');
+    tbody.innerHTML = '';
+
+    if (logs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Belum ada log audit keamanan.</td></tr>`;
+      return;
+    }
+
+    logs.forEach(log => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><small>${new Date(log.created_at).toLocaleString('id-ID')}</small></td>
+        <td><strong>${escapeHtml(log.username || 'SYSTEM')}</strong> <br><small class="text-muted">${escapeHtml(log.role || '-')}</small></td>
+        <td><code>${escapeHtml(log.ip_address || '-')}</code></td>
+        <td><span class="badge badge-outline-success">${escapeHtml(log.action)}</span></td>
+        <td><code>${escapeHtml(log.component)}</code></td>
+        <td><small>${escapeHtml(log.description)}</small></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Search Filter for Audit Logs
+  const auditLogsSearch = document.getElementById('audit-logs-search');
+  if (auditLogsSearch) {
+    auditLogsSearch.addEventListener('input', () => {
+      const query = auditLogsSearch.value.toLowerCase().trim();
+      if (!query) {
+        renderAuditLogsTable(auditLogsData);
+        return;
+      }
+
+      const filtered = auditLogsData.filter(log => {
+        const username = (log.username || '').toLowerCase();
+        const action = (log.action || '').toLowerCase();
+        const component = (log.component || '').toLowerCase();
+        const description = (log.description || '').toLowerCase();
+        const ip = (log.ip_address || '').toLowerCase();
+        return username.includes(query) || action.includes(query) || component.includes(query) || description.includes(query) || ip.includes(query);
+      });
+
+      renderAuditLogsTable(filtered);
+    });
+  }
+
+  // --- User Modals & Forms Handlers ---
+  const addUserModal = document.getElementById('add-user-modal');
+  const btnAddUserModal = document.getElementById('btn-add-user-modal');
+  const btnUserModalClose = document.getElementById('btn-user-modal-close');
+  const btnUserModalCancel = document.getElementById('btn-user-modal-cancel');
+  const addUserForm = document.getElementById('add-user-form');
+  const userRoleSelect = document.getElementById('user-role');
+  const userStudentGroup = document.getElementById('user-student-group');
+  const userStudentIdSelect = document.getElementById('user-student-id');
+
+  // Trigger showing student account dropdown if role is STUDENT
+  userRoleSelect.addEventListener('change', async () => {
+    if (userRoleSelect.value === 'STUDENT') {
+      userStudentGroup.classList.remove('hidden');
+      await populateStudentAccountDropdown();
+    } else {
+      userStudentGroup.classList.add('hidden');
+    }
+  });
+
+  async function populateStudentAccountDropdown(selectedId = null) {
+    userStudentIdSelect.innerHTML = '<option value="">-- Hubungkan Akun SIMKULIAH --</option>';
+    
+    // Fetch accounts if accountsData is empty
+    if (accountsData.length === 0) {
+      try {
+        const res = await apiFetch('/api/accounts');
+        if (res.success) accountsData = res.data || [];
+      } catch (err) {}
+    }
+
+    accountsData.forEach(acc => {
+      const opt = document.createElement('option');
+      opt.value = acc.id;
+      opt.textContent = `${acc.nama} (${acc.npm})`;
+      if (selectedId && acc.id == selectedId) {
+        opt.selected = true;
+      }
+      userStudentIdSelect.appendChild(opt);
+    });
+  }
+
+  // Open user modal for add
+  btnAddUserModal.addEventListener('click', () => {
+    document.getElementById('user-id').value = '';
+    addUserForm.reset();
+    document.getElementById('user-modal-title').innerHTML = '<i data-lucide="user-plus"></i> Tambah Pengguna Baru';
+    document.getElementById('user-username').readOnly = false;
+    document.getElementById('user-username').disabled = false;
+    document.getElementById('user-password').required = true;
+    document.getElementById('user-password-group').classList.remove('hidden');
+    userStudentGroup.classList.add('hidden');
+    
+    addUserModal.classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  });
+
+  async function openEditUserModal(user) {
+    document.getElementById('user-id').value = user.id;
+    document.getElementById('user-username').value = user.username;
+    document.getElementById('user-username').readOnly = true;
+    document.getElementById('user-username').disabled = true;
+    document.getElementById('user-email').value = user.email || '';
+    document.getElementById('user-password').value = '';
+    document.getElementById('user-password').required = false;
+    document.getElementById('user-password-group').classList.add('hidden'); // Hide password input in edit mode (use Reset Password instead)
+    
+    document.getElementById('user-role').value = user.role;
+    document.getElementById('user-modal-title').innerHTML = '<i data-lucide="edit-3"></i> Edit Pengguna';
+
+    if (user.role === 'STUDENT') {
+      userStudentGroup.classList.remove('hidden');
+      await populateStudentAccountDropdown(user.student_account_id);
+    } else {
+      userStudentGroup.classList.add('hidden');
+    }
+
+    addUserModal.classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function closeUserModal() {
+    addUserModal.classList.add('hidden');
+    addUserForm.reset();
+  }
+
+  btnUserModalClose.addEventListener('click', closeUserModal);
+  btnUserModalCancel.addEventListener('click', closeUserModal);
+  addUserModal.addEventListener('click', (e) => {
+    if (e.target === addUserModal) closeUserModal();
+  });
+
+  addUserForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btnSubmit = document.getElementById('btn-user-modal-submit');
+    btnSubmit.disabled = true;
+    btnSubmit.textContent = 'Menyimpan...';
+
+    const id = document.getElementById('user-id').value;
+    const username = document.getElementById('user-username').value;
+    const email = document.getElementById('user-email').value;
+    const password = document.getElementById('user-password').value;
+    const role = document.getElementById('user-role').value;
+    const student_account_id = role === 'STUDENT' ? document.getElementById('user-student-id').value : null;
+
+    try {
+      let result;
+      if (id) {
+        // Edit User
+        result = await apiFetch(`/api/users/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ email, role, student_account_id })
+        });
+      } else {
+        // Add User
+        result = await apiFetch('/api/users', {
+          method: 'POST',
+          body: JSON.stringify({ username, email, password, role, student_account_id })
+        });
+      }
+
+      if (result.success) {
+        showToast(id ? 'Pengguna berhasil diperbarui!' : 'Pengguna baru berhasil dibuat!', 'success');
+        closeUserModal();
+        fetchUsersData();
+      } else {
+        showToast(result.message || 'Gagal menyimpan pengguna.', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Gagal terhubung ke server.', 'error');
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = 'Simpan';
+    }
+  });
+
+  // Admin Reset User Password
+  const resetPasswordModal = document.getElementById('reset-password-modal');
+  const resetPasswordForm = document.getElementById('reset-password-form');
+  const btnResetModalClose = document.getElementById('btn-reset-modal-close');
+  const btnResetModalCancel = document.getElementById('btn-reset-modal-cancel');
+
+  function openResetPasswordModal(id, username) {
+    document.getElementById('reset-user-id').value = id;
+    document.getElementById('reset-username-display').value = username;
+    document.getElementById('reset-password-val').value = '';
+    resetPasswordModal.classList.remove('hidden');
+  }
+
+  function closeResetModal() {
+    resetPasswordModal.classList.add('hidden');
+  }
+
+  btnResetModalClose.addEventListener('click', closeResetModal);
+  btnResetModalCancel.addEventListener('click', closeResetModal);
+  resetPasswordModal.addEventListener('click', (e) => {
+    if (e.target === resetPasswordModal) closeResetModal();
+  });
+
+  resetPasswordForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btnSubmit = document.getElementById('btn-reset-modal-submit');
+    btnSubmit.disabled = true;
+    btnSubmit.textContent = 'Mereset...';
+
+    const id = document.getElementById('reset-user-id').value;
+    const password = document.getElementById('reset-password-val').value;
+
+    try {
+      const result = await apiFetch(`/api/users/${id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ password })
+      });
+
+      if (result.success) {
+        showToast('Password pengguna berhasil direset!', 'success');
+        closeResetModal();
+      } else {
+        showToast(result.message || 'Gagal mereset password.', 'error');
+      }
+    } catch (err) {
+      showToast('Gagal mereset password.', 'error');
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = 'Reset Password';
+    }
+  });
+
+  async function deleteUser(id) {
+    if (confirm('Apakah Anda yakin ingin menghapus pengguna ini? Semua sesi aktif milik pengguna ini juga akan ditutup secara otomatis.')) {
+      try {
+        const res = await apiFetch(`/api/users/${id}`, { method: 'DELETE' });
+        if (res.success) {
+          showToast('Pengguna berhasil dihapus.', 'success');
+          fetchUsersData();
+        } else {
+          showToast(res.message || 'Gagal menghapus pengguna.', 'error');
+        }
+      } catch (err) {
+        showToast('Gagal menghapus pengguna.', 'error');
+      }
+    }
+  }
+
+  // --- Change Password (Self Service) ---
+  const changePasswordModal = document.getElementById('change-password-modal');
+  const changePasswordForm = document.getElementById('change-password-form');
+  const btnChangePasswordModal = document.getElementById('btn-change-password-modal');
+  const btnChangeModalClose = document.getElementById('btn-change-modal-close');
+  const btnChangeModalCancel = document.getElementById('btn-change-modal-cancel');
+
+  if (btnChangePasswordModal) {
+    btnChangePasswordModal.addEventListener('click', () => {
+      changePasswordForm.reset();
+      changePasswordModal.classList.remove('hidden');
+    });
+  }
+
+  function closeChangeModal() {
+    changePasswordModal.classList.add('hidden');
+  }
+
+  btnChangeModalClose.addEventListener('click', closeChangeModal);
+  btnChangeModalCancel.addEventListener('click', closeChangeModal);
+  changePasswordModal.addEventListener('click', (e) => {
+    if (e.target === changePasswordModal) closeChangeModal();
+  });
+
+  changePasswordForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btnSubmit = document.getElementById('btn-change-modal-submit');
+    
+    const oldPassword = document.getElementById('change-old-password').value;
+    const newPassword = document.getElementById('change-new-password').value;
+    const confirmPassword = document.getElementById('change-confirm-password').value;
+
+    if (newPassword !== confirmPassword) {
+      showToast('Password baru tidak cocok dengan konfirmasi.', 'error');
+      return;
+    }
+
+    btnSubmit.disabled = true;
+    btnSubmit.textContent = 'Memperbarui...';
+
+    try {
+      const result = await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ oldPassword, newPassword })
+      });
+
+      if (result.success) {
+        showToast('Password Anda berhasil diperbarui!', 'success');
+        closeChangeModal();
+      } else {
+        showToast(result.message || 'Gagal memperbarui password.', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Gagal memperbarui password.', 'error');
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = 'Perbarui Password';
     }
   });
 

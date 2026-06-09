@@ -11,6 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Icons via Lucide Icons (CDN) -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for data visualization -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="dark-theme">
@@ -41,9 +43,6 @@
           <span>Login ke Panel</span> <i data-lucide="log-in"></i>
         </button>
       </form>
-      <div class="login-footer">
-        <p>Default: <code>admin</code> / <code>admin</code></p>
-      </div>
     </div>
   </div>
 
@@ -77,11 +76,20 @@
         <a href="#accounts" class="nav-item" id="nav-accounts">
           <i data-lucide="users"></i> <span>Akun Mahasiswa</span>
         </a>
+        <a href="#calendar" class="nav-item" id="nav-calendar">
+          <i data-lucide="calendar-days"></i> <span>Kalender Akademik</span>
+        </a>
         <a href="#scheduler" class="nav-item" id="nav-scheduler">
           <i data-lucide="calendar"></i> <span>Auto Scheduler</span>
         </a>
         <a href="#logs" class="nav-item" id="nav-logs">
           <i data-lucide="history"></i> <span>Riwayat Absen</span>
+        </a>
+        <a href="#analytics" class="nav-item" id="nav-analytics">
+          <i data-lucide="line-chart"></i> <span>Analisis & Laporan</span>
+        </a>
+        <a href="#ai-insights" class="nav-item" id="nav-ai-insights">
+          <i data-lucide="sparkles"></i> <span>🤖 AI Insights</span>
         </a>
         <a href="#health" class="nav-item" id="nav-health">
           <i data-lucide="activity"></i> <span>Health Monitor</span>
@@ -89,9 +97,21 @@
         <a href="#system-tools" class="nav-item" id="nav-system-tools">
           <i data-lucide="server"></i> <span>System Tools</span>
         </a>
+        <a href="#users" class="nav-item admin-only hidden" id="nav-users">
+          <i data-lucide="user-cog"></i> <span>User Management</span>
+        </a>
+        <a href="#sessions" class="nav-item admin-only hidden" id="nav-sessions">
+          <i data-lucide="key"></i> <span>Sesi Aktif</span>
+        </a>
+        <a href="#audit-logs" class="nav-item admin-only hidden" id="nav-audit-logs">
+          <i data-lucide="scroll"></i> <span>Audit Trail Logs</span>
+        </a>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="sidebar-footer" style="display: flex; flex-direction: column; gap: 8px;">
+        <button id="btn-change-password-modal" class="btn btn-secondary btn-block font-outfit" style="background: rgba(30, 41, 59, 0.7); border: 1px solid var(--border-color); color: var(--text-primary); display: flex; align-items: center; justify-content: center; gap: 8px;">
+          <i data-lucide="key-round"></i> <span>Ubah Password</span>
+        </button>
         <button id="btn-logout" class="btn btn-danger btn-block font-outfit">
           <i data-lucide="log-out"></i> <span>Keluar</span>
         </button>
@@ -502,6 +522,440 @@
           </div>
         </section>
 
+        <!-- ================= PAGE: CALENDAR ================= -->
+        <section id="page-calendar" class="page-section hidden">
+          <div class="action-bar">
+            <h3 class="section-subtitle font-outfit">Pengaturan Kalender Akademik & Hari Libur</h3>
+            <button id="btn-save-calendar" class="btn btn-primary font-outfit">
+              <i data-lucide="save"></i> Simpan Semua Perubahan
+            </button>
+          </div>
+
+          <div class="settings-split">
+            <!-- Left Card: Academic Semester & Breaks -->
+            <div class="panel">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="graduation-cap" class="color-blue"></i> Masa Aktif & Libur Semester</h4>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                  <div class="form-group">
+                    <label for="cal-sem-start">Mulai Semester Aktif</label>
+                    <input type="date" id="cal-sem-start" class="form-input">
+                  </div>
+                  <div class="form-group">
+                    <label for="cal-sem-end">Selesai Semester Aktif</label>
+                    <input type="date" id="cal-sem-end" class="form-input">
+                  </div>
+                </div>
+
+                <div style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 8px;">
+                  <h5 class="font-outfit" style="margin-bottom: 12px; font-size: 14px; font-weight: 600;">Daftar Libur Semester</h5>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                    <input type="text" id="break-name-input" class="form-input" placeholder="Nama Libur (misal: Libur Natal)" style="font-size: 12px;">
+                    <input type="date" id="break-start-input" class="form-input" style="font-size: 12px;">
+                    <input type="date" id="break-end-input" class="form-input" style="font-size: 12px;">
+                  </div>
+                  <button id="btn-add-break" class="btn btn-secondary btn-sm btn-block font-outfit" type="button" style="margin-bottom: 12px;">
+                    <i data-lucide="plus"></i> Tambah Libur Semester
+                  </button>
+
+                  <div class="list-manager-card" id="breaks-list-manager">
+                    <!-- Dynamic breaks items -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Card: National Holidays -->
+            <div class="panel">
+              <div class="panel-header">
+                <h4 class="font-outfit"><i data-lucide="calendar-heart" class="color-red"></i> Hari Libur Nasional</h4>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div>
+                  <h5 class="font-outfit" style="margin-bottom: 12px; font-size: 14px; font-weight: 600;">Tambah Hari Libur Nasional</h5>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                    <input type="text" id="holiday-name-input" class="form-input" placeholder="Nama Libur Nasional" style="font-size: 12px;">
+                    <input type="date" id="holiday-date-input" class="form-input" style="font-size: 12px;">
+                  </div>
+                  <button id="btn-add-holiday" class="btn btn-secondary btn-sm btn-block font-outfit" type="button" style="margin-bottom: 12px;">
+                    <i data-lucide="plus"></i> Tambah Hari Libur
+                  </button>
+
+                  <div class="list-manager-card" id="holidays-list-manager">
+                    <!-- Dynamic holidays items -->
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== TAB: ANALISIS & LAPORAN ==================== -->
+        <section id="page-analytics" class="page-section hidden">
+          <!-- Overview Cards Grid -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon bg-cyan-soft"><i data-lucide="play-circle" class="text-cyan"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Total Eksekusi</span>
+                <h3 class="stat-value" id="analytic-total-execs">0</h3>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-green-soft"><i data-lucide="check-circle" class="text-green"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Success Rate</span>
+                <h3 class="stat-value" id="analytic-success-rate">0%</h3>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-red-soft"><i data-lucide="x-circle" class="text-red"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Total Kegagalan</span>
+                <h3 class="stat-value" id="analytic-failed-count">0</h3>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-yellow-soft"><i data-lucide="skip-forward" class="text-yellow"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Total Dilewati</span>
+                <h3 class="stat-value" id="analytic-skipped-count">0</h3>
+              </div>
+            </div>
+          </div>
+
+          <!-- Early Warning Alerts Panel -->
+          <div class="panel hidden" id="analytic-warning-panel" style="margin-bottom: 24px;">
+            <div class="panel-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+              <h3 class="font-outfit text-red" style="display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px;">
+                <i data-lucide="alert-triangle" class="glow-red"></i> Sistem Peringatan Dini (Early Warning System)
+              </h3>
+            </div>
+            <div class="panel-body" id="analytic-alerts-container" style="display: flex; flex-direction: column; gap: 12px;">
+              <!-- Dynamic alert banners go here -->
+            </div>
+          </div>
+
+          <!-- Main Analytics Grid -->
+          <div class="settings-grid" style="margin-bottom: 24px;">
+            <!-- Trend line chart -->
+            <div class="panel">
+              <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 class="font-outfit"><i data-lucide="trending-up"></i> Tren Kehadiran</h3>
+                <select id="analytic-trend-range" class="form-input" style="width: auto; padding: 4px 12px;">
+                  <option value="7">7 Hari Terakhir</option>
+                  <option value="30" selected>30 Hari Terakhir</option>
+                  <option value="120">1 Semester</option>
+                </select>
+              </div>
+              <div class="panel-body" style="position: relative; height: 300px; width: 100%;">
+                <canvas id="chart-trends"></canvas>
+              </div>
+            </div>
+
+            <!-- Top Failed Accounts & Reasons Grid -->
+            <div class="panel">
+              <div class="panel-header" style="margin-bottom: 16px;">
+                <h3 class="font-outfit"><i data-lucide="alert-circle"></i> Analisis Hambatan & Kegagalan</h3>
+              </div>
+              <div class="panel-body settings-grid" style="grid-template-columns: 1.2fr 0.8fr; gap: 16px; padding: 0;">
+                <div>
+                  <h4 style="font-size: 13px; margin-bottom: 8px; color: var(--text-secondary);">Top 5 Akun Sering Gagal</h4>
+                  <div class="table-container" style="border: 1px solid var(--border-color); border-radius: 8px; max-height: 250px; overflow-y: auto;">
+                    <table class="data-table" style="font-size: 12px;">
+                      <thead>
+                        <tr>
+                          <th>Nama</th>
+                          <th>NPM</th>
+                          <th>Total Gagal</th>
+                        </tr>
+                      </thead>
+                      <tbody id="analytic-top-failures-tbody">
+                        <!-- Dynamic list -->
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div>
+                  <h4 style="font-size: 13px; margin-bottom: 8px; color: var(--text-secondary);">Penyebab Kegagalan Utama</h4>
+                  <div style="position: relative; height: 180px; width: 100%;">
+                    <canvas id="chart-reasons"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reporting / Export Controls -->
+          <div class="panel">
+            <div class="panel-header" style="margin-bottom: 16px;">
+              <h3 class="font-outfit"><i data-lucide="file-text"></i> Unduh Laporan Rekap Kehadiran</h3>
+            </div>
+            <div class="panel-body" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+              <div class="text-muted" style="font-size: 13px;">
+                Ekspor data performa absensi mahasiswa dalam bentuk format standar laporan yang bersih, terdelimitasi rapi, dan siap cetak.
+              </div>
+              <div style="display: flex; gap: 12px; align-items: center;">
+                <select id="analytic-report-days" class="form-input" style="width: auto;">
+                  <option value="7">7 Hari Terakhir</option>
+                  <option value="30" selected>30 Hari Terakhir</option>
+                  <option value="90">90 Hari Terakhir</option>
+                  <option value="180">1 Semester</option>
+                </select>
+                <button type="button" id="btn-export-excel" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <i data-lucide="file-spreadsheet" style="width:16px; height:16px;"></i> Excel (CSV)
+                </button>
+                <button type="button" id="btn-export-pdf" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px; background-color: var(--accent-color);">
+                  <i data-lucide="file-down" style="width:16px; height:16px;"></i> PDF Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== TAB: AI INSIGHTS ==================== -->
+        <section id="page-ai-insights" class="page-section hidden">
+          <!-- Page Header -->
+          <div class="panel" style="margin-bottom: 24px;">
+            <div class="panel-body" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+              <div>
+                <h2 class="font-outfit" style="margin: 0; font-size: 22px; display: flex; align-items: center; gap: 8px;">
+                  <i data-lucide="sparkles" class="text-cyan animate-pulse"></i> AI Insights & Recommendation Engine
+                </h2>
+                <div class="text-muted" style="font-size: 13px; margin-top: 4px;">
+                  Analisis performa cerdas, deteksi bentrokan kalender akademik, efisiensi memori, dan penyusunan mitigasi kegagalan.
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span class="text-muted" style="font-size: 11px;">
+                  Terakhir diperbarui: <strong id="ai-cache-time" class="text-cyan">Memuat...</strong>
+                </span>
+                <button type="button" id="btn-ai-refresh" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> Perbarui Analisis
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Executive Summary Section -->
+          <div class="settings-grid" style="grid-template-columns: 1.3fr 0.7fr; gap: 24px; margin-bottom: 24px;">
+            <!-- Executive Summary text -->
+            <div class="panel" style="border-left: 4px solid var(--accent-color);">
+              <div class="panel-header" style="margin-bottom: 12px;">
+                <h3 class="font-outfit" style="font-size: 15px; margin: 0; display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="bot" class="text-cyan"></i> AI Executive Summary
+                </h3>
+              </div>
+              <div class="panel-body" style="padding: 0;">
+                <div id="ai-exec-summary-text" style="font-size: 13.5px; line-height: 1.6; color: var(--text-primary); white-space: pre-line;">
+                  Menganalisis data aktivitas absensi Anda...
+                </div>
+              </div>
+            </div>
+
+            <!-- Risk Score Panel -->
+            <div class="panel" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(10px);">
+              <span class="text-muted" style="font-size: 12px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em;">Indeks Risiko Sistem</span>
+              <div style="position: relative; width: 90px; height: 90px; display: flex; justify-content: center; align-items: center; border-radius: 50%; border: 4px solid var(--border-color); margin-bottom: 12px;">
+                <span id="ai-risk-score" style="font-size: 28px; font-weight: 800; font-family: 'Outfit', sans-serif;">0</span>
+                <span style="font-size: 10px; position: absolute; bottom: 12px; color: var(--text-secondary);">/100</span>
+              </div>
+              <span id="ai-risk-level" class="font-outfit" style="font-size: 14px; font-weight: 700; margin-bottom: 4px;">STABIL</span>
+              <span id="ai-risk-desc" class="text-muted" style="font-size: 11px; max-width: 180px;">Sistem aman tanpa anomali.</span>
+            </div>
+          </div>
+
+          <!-- Severity Summary Counts -->
+          <div class="stats-grid" style="margin-bottom: 24px;">
+            <div class="stat-card" style="border-bottom: 3px solid var(--red);">
+              <div class="stat-icon bg-red-soft"><i data-lucide="alert-octagon" class="text-red"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Isu Kritis (CRITICAL)</span>
+                <h3 class="stat-value text-red" id="ai-count-critical">0</h3>
+              </div>
+            </div>
+            <div class="stat-card" style="border-bottom: 3px solid var(--orange);">
+              <div class="stat-icon bg-orange-soft"><i data-lucide="alert-triangle" class="text-orange"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Isu Tinggi (HIGH)</span>
+                <h3 class="stat-value text-orange" id="ai-count-high">0</h3>
+              </div>
+            </div>
+            <div class="stat-card" style="border-bottom: 3px solid var(--yellow);">
+              <div class="stat-icon bg-yellow-soft"><i data-lucide="zap" class="text-yellow"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Isu Sedang (MEDIUM)</span>
+                <h3 class="stat-value text-yellow" id="ai-count-medium">0</h3>
+              </div>
+            </div>
+            <div class="stat-card" style="border-bottom: 3px solid var(--cyan);">
+              <div class="stat-icon bg-cyan-soft"><i data-lucide="info" class="text-cyan"></i></div>
+              <div class="stat-info">
+                <span class="stat-label">Isu Rendah (LOW)</span>
+                <h3 class="stat-value text-cyan" id="ai-count-low">0</h3>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Issues & Action Plan -->
+          <div class="panel" style="margin-bottom: 24px;">
+            <div class="panel-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+              <h3 class="font-outfit" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="clipboard-list" class="text-cyan"></i> Tindakan & Rekomendasi Teratas
+              </h3>
+            </div>
+            <div class="panel-body" id="ai-top-issues-container" style="display: flex; flex-direction: column; gap: 14px; padding: 0;">
+              <!-- Dynamic items -->
+            </div>
+          </div>
+
+          <!-- Categorized Detail Tab Controls -->
+          <div class="panel" style="margin-bottom: 24px;">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+              <h3 class="font-outfit" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="layers" class="text-cyan"></i> Rincian Masalah & Solusi Per Kategori
+              </h3>
+            </div>
+            <div class="panel-body" style="padding: 0;">
+              <!-- Tabs List -->
+              <div class="tab-controls-ai" style="display: flex; gap: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                <button type="button" class="tab-btn-ai active" data-category="accounts">Akun Mahasiswa</button>
+                <button type="button" class="tab-btn-ai" data-category="scheduler">Auto Scheduler</button>
+                <button type="button" class="tab-btn-ai" data-category="system">Kesehatan Sistem</button>
+                <button type="button" class="tab-btn-ai" data-category="calendar">Kalender Akademik</button>
+              </div>
+
+              <!-- Tab content area -->
+              <div id="ai-categorized-issues" style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- Dynamic categories -->
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Report Generator Controls -->
+          <div class="panel">
+            <div class="panel-header" style="margin-bottom: 12px;">
+              <h3 class="font-outfit" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="file-text" class="text-cyan"></i> AI Insight Report Generator
+              </h3>
+            </div>
+            <div class="panel-body" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+              <div class="text-muted" style="font-size: 13px; max-width: 550px;">
+                Dapatkan salinan laporan tertulis lengkap berbasis Markdown dari asisten AI kami mengenai kondisi scheduler, status akun, dan kesehatan server secara detail.
+              </div>
+              <div style="display: flex; gap: 10px;">
+                <button type="button" class="btn btn-secondary btn-ai-report" data-period="daily" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <i data-lucide="file-text" style="width: 14px; height: 14px;"></i> Harian (Daily)
+                </button>
+                <button type="button" class="btn btn-secondary btn-ai-report" data-period="weekly" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <i data-lucide="file-text" style="width: 14px; height: 14px;"></i> Mingguan (Weekly)
+                </button>
+                <button type="button" class="btn btn-secondary btn-ai-report" data-period="monthly" style="display: inline-flex; align-items: center; gap: 6px;">
+                  <i data-lucide="file-text" style="width: 14px; height: 14px;"></i> Bulanan (Monthly)
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== TAB: USER MANAGEMENT ==================== -->
+        <section id="page-users" class="page-section hidden">
+          <div class="action-bar">
+            <h3 class="section-subtitle font-outfit">User Management</h3>
+            <button id="btn-add-user-modal" class="btn btn-primary font-outfit">
+              <i data-lucide="user-plus"></i> Tambah Pengguna Baru
+            </button>
+          </div>
+
+          <div class="panel">
+            <div class="table-container">
+              <table class="data-table font-outfit">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Akun Mahasiswa</th>
+                    <th style="width: 280px; text-align: center;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="users-list-body">
+                  <tr>
+                    <td colspan="6" class="text-center">Memuat daftar pengguna...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== TAB: SESSION MANAGER ==================== -->
+        <section id="page-sessions" class="page-section hidden">
+          <div class="action-bar">
+            <h3 class="section-subtitle font-outfit">Active User Sessions</h3>
+            <div class="text-muted" style="font-size: 13px;">
+              Pantau dan kelola sesi aktif pengguna yang masuk ke panel kontrol.
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="table-container">
+              <table class="data-table font-outfit">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>IP Address</th>
+                    <th>User Agent (Perangkat)</th>
+                    <th>Waktu Login</th>
+                    <th>Terakhir Aktif</th>
+                    <th style="width: 120px; text-align: center;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="sessions-list-body">
+                  <tr>
+                    <td colspan="6" class="text-center">Memuat sesi aktif...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== TAB: AUDIT TRAIL LOGS ==================== -->
+        <section id="page-audit-logs" class="page-section hidden">
+          <div class="action-bar search-bar-wrapper">
+            <h3 class="section-subtitle font-outfit">Security Audit Trail</h3>
+            <div class="filter-controls">
+              <input type="text" id="audit-logs-search" class="form-input" placeholder="Cari aksi, pengguna, atau deskripsi...">
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="table-container">
+              <table class="data-table font-outfit" id="table-audit-logs">
+                <thead>
+                  <tr>
+                    <th style="width: 180px;">Waktu</th>
+                    <th>Pengguna</th>
+                    <th>IP Address</th>
+                    <th>Aksi</th>
+                    <th>Komponen</th>
+                    <th>Deskripsi</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-logs-list-body">
+                  <tr>
+                    <td colspan="6" class="text-center">Memuat log audit...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
       </main>
     </div>
   </div>
@@ -577,6 +1031,145 @@
         <div class="modal-footer">
           <button type="button" id="btn-sched-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
           <button type="submit" id="btn-sched-modal-submit" class="btn btn-primary font-outfit">Simpan Jadwal</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: SMART WEEKLY RULES ==================== -->
+  <div id="rules-modal" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 680px; width: 100%;">
+      <div class="modal-header">
+        <h3 class="font-outfit"><i data-lucide="calendar-range" class="color-cyan"></i> Pengaturan Smart Rules & Jadwal Mingguan</h3>
+        <button id="btn-rules-modal-close" class="btn-icon" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <form id="rules-form">
+        <input type="hidden" id="rules-account-id">
+        <div class="modal-body" style="max-height: 460px; overflow-y: auto;">
+          <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+            Atur jam absen otomatis mahasiswa per hari (format <code>HH:MM</code>, pisahkan dengan koma jika lebih dari satu, misal: <code>07:30, 13:40</code>). Hari libur nasional, libur semester, dan akun tidak aktif akan terlewati secara otomatis.
+          </p>
+          
+          <div class="rules-grid" id="rules-days-container">
+            <!-- Loaded dynamically with 7 day rows -->
+          </div>
+
+          <!-- Preview Area -->
+          <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <h4 class="font-outfit" style="font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+              <i data-lucide="clock" class="color-blue"></i> Simulasi Preview Jadwal (7 Hari ke Depan)
+            </h4>
+            <div class="preview-list" id="rules-preview-container">
+              <!-- Loaded dynamically -->
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-rules-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-rules-modal-submit" class="btn btn-primary font-outfit">Simpan & Terapkan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADD/EDIT USER ==================== -->
+  <div id="add-user-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-outfit" id="user-modal-title"><i data-lucide="user-plus"></i> Tambah Pengguna</h3>
+        <button id="btn-user-modal-close" class="btn-icon" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <form id="add-user-form">
+        <input type="hidden" id="user-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="user-username">Username</label>
+            <input type="text" id="user-username" placeholder="Contoh: najebb" required>
+          </div>
+          <div class="form-group">
+            <label for="user-email">Email</label>
+            <input type="email" id="user-email" placeholder="Contoh: najebb@example.com" required>
+          </div>
+          <div class="form-group" id="user-password-group">
+            <label for="user-password">Password</label>
+            <input type="password" id="user-password" placeholder="Masukkan password (min. 8 karakter)">
+          </div>
+          <div class="form-group">
+            <label for="user-role">Role Akses</label>
+            <select id="user-role" class="form-input" required style="background: rgba(30, 41, 59, 0.7); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; width: 100%;">
+              <option value="SUPER_ADMIN">SUPER_ADMIN (Full Access)</option>
+              <option value="ADMIN">ADMIN (Operations & Audit)</option>
+              <option value="OPERATOR">OPERATOR (Read/Write Tasks)</option>
+              <option value="STUDENT">STUDENT (Satu Akun Mahasiswa)</option>
+            </select>
+          </div>
+          <div class="form-group hidden" id="user-student-group">
+            <label for="user-student-id">Hubungkan dengan Akun SIMKULIAH</label>
+            <select id="user-student-id" class="form-input" style="background: rgba(30, 41, 59, 0.7); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; width: 100%;">
+              <!-- Loaded dynamically with Accounts list -->
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-user-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-user-modal-submit" class="btn btn-primary font-outfit">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADMIN RESET PASSWORD ==================== -->
+  <div id="reset-password-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-outfit"><i data-lucide="key"></i> Reset Password Pengguna</h3>
+        <button id="btn-reset-modal-close" class="btn-icon" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <form id="reset-password-form">
+        <input type="hidden" id="reset-user-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="reset-username-display">Username</label>
+            <input type="text" id="reset-username-display" readonly disabled style="opacity: 0.7;">
+          </div>
+          <div class="form-group">
+            <label for="reset-password-val">Password Baru</label>
+            <input type="password" id="reset-password-val" placeholder="Masukkan password baru (min. 8 karakter)" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-reset-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-reset-modal-submit" class="btn btn-primary font-outfit">Reset Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: CHANGE OWN PASSWORD ==================== -->
+  <div id="change-password-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-outfit"><i data-lucide="shield-alert"></i> Ubah Password Anda</h3>
+        <button id="btn-change-modal-close" class="btn-icon" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <form id="change-password-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="change-old-password">Password Saat Ini</label>
+            <input type="password" id="change-old-password" placeholder="Masukkan password lama" required>
+          </div>
+          <div class="form-group">
+            <label for="change-new-password">Password Baru</label>
+            <input type="password" id="change-new-password" placeholder="Minimal 8 karakter, ada angka & simbol" required>
+          </div>
+          <div class="form-group">
+            <label for="change-confirm-password">Konfirmasi Password Baru</label>
+            <input type="password" id="change-confirm-password" placeholder="Masukkan kembali password baru" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-change-modal-cancel" class="btn btn-secondary font-outfit">Batal</button>
+          <button type="submit" id="btn-change-modal-submit" class="btn btn-primary font-outfit">Perbarui Password</button>
         </div>
       </form>
     </div>

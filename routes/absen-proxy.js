@@ -21,6 +21,13 @@ const logger = require('../utils/logger');
 const BrowserManager = require('../utils/browser-manager');
 const NotificationService = require('../services/notification');
 
+// Security Governance Imports
+const RbacService = require('../services/rbac-service');
+const { requirePermission } = RbacService;
+const UserService = require('../services/user-service');
+const SessionService = require('../services/session-service');
+const AuditService = require('../services/audit-service');
+
 // ── Setup DB dengan Fallback ─────────────────────────────────────────────────
 let db;
 let dbFallback = false;
@@ -46,6 +53,7 @@ try {
     logger.error('Database in-memory pun gagal terinisialisasi!', err);
   }
 }
+router.db = db;
 
 // Inisialisasi skema tabel jika db tersedia
 if (db) {
@@ -56,6 +64,7 @@ if (db) {
         nama         TEXT    NOT NULL,
         npm          TEXT    NOT NULL UNIQUE,
         password_enc TEXT    NOT NULL,
+        is_active    INTEGER DEFAULT 1,
         created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS absen_log (
@@ -77,6 +86,17 @@ if (db) {
         updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS scheduler_rules (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id  INTEGER NOT NULL,
+        day_of_week INTEGER NOT NULL, -- 0 (Minggu) s/d 6 (Sabtu)
+        time_slots  TEXT    NOT NULL, -- Jam dipisahkan koma, misal: "10:50,17:30"
+        is_enabled  INTEGER DEFAULT 1,
+        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+        UNIQUE(account_id, day_of_week)
+      );
       CREATE TABLE IF NOT EXISTS scheduler_history (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         scheduler_id INTEGER NOT NULL,
@@ -96,7 +116,74 @@ if (db) {
         created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS users (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        username           TEXT    NOT NULL UNIQUE,
+        email              TEXT,
+        password_hash      TEXT    NOT NULL,
+        salt               TEXT    NOT NULL,
+        role               TEXT    NOT NULL,
+        status             TEXT    DEFAULT 'active',
+        failed_logins      INTEGER DEFAULT 0,
+        locked_until       DATETIME,
+        student_account_id INTEGER,
+        created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        id            TEXT    PRIMARY KEY,
+        user_id       INTEGER NOT NULL,
+        ip_address    TEXT,
+        user_agent    TEXT,
+        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at    DATETIME NOT NULL,
+        remember_me   INTEGER  DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        user_id    INTEGER,
+        username   TEXT,
+        role       TEXT,
+        action     TEXT    NOT NULL,
+        resource   TEXT,
+        details    TEXT,
+        ip_address TEXT
+      );
     `);
+
+    // Tambah kolom is_active di accounts jika belum ada (untuk backward compatibility database lama)
+    try {
+      db.exec("ALTER TABLE accounts ADD COLUMN is_active INTEGER DEFAULT 1;");
+      logger.info('Kolom is_active berhasil diverifikasi/ditambahkan ke tabel accounts.');
+    } catch (e) {
+      // Abaikan jika kolom sudah ada
+    }
+
+    // Seed default SUPER_ADMIN user jika kosong
+    try {
+      const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+      if (userCount === 0) {
+        const DASHBOARD_USER = process.env.ABSEN_DASHBOARD_USER || 'admin';
+        const DASHBOARD_PASS = process.env.ABSEN_DASHBOARD_PASS || 'najebb22';
+        
+        const crypto = require('crypto');
+        const salt = crypto.randomBytes(32).toString('hex');
+        const hash = crypto.pbkdf2Sync(DASHBOARD_PASS, salt, 1000, 64, 'sha512').toString('hex');
+        
+        db.prepare(`
+          INSERT INTO users (username, email, password_hash, salt, role, status)
+          VALUES (?, ?, ?, ?, 'SUPER_ADMIN', 'active')
+        `).run(DASHBOARD_USER, 'admin@localhost', hash, salt);
+        
+        logger.info(`[Database Seeder] Default SUPER_ADMIN user '${DASHBOARD_USER}' berhasil dibuat.`);
+      }
+    } catch (e) {
+      logger.error('[Database Seeder] Gagal melakukan seeder user default:', e);
+    }
+
     logger.info('Skema database terverifikasi/dibuat.');
   } catch (e) {
     logger.error('Gagal membuat skema database:', e);
@@ -143,7 +230,7 @@ function decrypt(enc) {
 const Accounts = {
   getAll: () => {
     try {
-      return db.prepare('SELECT id,nama,npm,created_at FROM accounts ORDER BY created_at DESC').all();
+      return db.prepare('SELECT id,nama,npm,is_active,created_at FROM accounts ORDER BY created_at DESC').all();
     } catch (e) {
       logger.error('DB Error: Accounts.getAll gagal', e);
       return [];
@@ -169,7 +256,7 @@ const Accounts = {
   create: ({ nama, npm, password }) => {
     try {
       const r = db.prepare('INSERT INTO accounts (nama,npm,password_enc) VALUES (?,?,?)').run(nama, npm, encrypt(password));
-      return { id: r.lastInsertRowid, nama, npm };
+      return { id: r.lastInsertRowid, nama, npm, is_active: 1 };
     } catch (e) {
       logger.error('DB Error: Accounts.create gagal', e);
       throw e;
@@ -183,6 +270,15 @@ const Accounts = {
       return false;
     }
   },
+  toggleActive: (id, isActive) => {
+    try {
+      db.prepare('UPDATE accounts SET is_active = ? WHERE id = ?').run(isActive, id);
+      return true;
+    } catch (e) {
+      logger.error(`DB Error: Accounts.toggleActive gagal untuk ID ${id}`, e);
+      return false;
+    }
+  }
 };
 
 const AbsenLog = {
@@ -624,8 +720,13 @@ router.get('/health', (req, res) => {
 });
 
 // GET /api/accounts
-router.get('/accounts', (req, res) => {
+router.get('/accounts', requirePermission('accounts:view'), (req, res) => {
   try {
+    // Student only gets their own account
+    if (req.user.role === 'STUDENT') {
+      const acc = Accounts.getById(req.user.student_account_id);
+      return res.json({ success: true, data: acc ? [acc] : [] });
+    }
     res.json({ success: true, data: Accounts.getAll() });
   } catch(e) {
     logger.error('API Error: GET /accounts gagal', e);
@@ -634,12 +735,13 @@ router.get('/accounts', (req, res) => {
 });
 
 // POST /api/accounts
-router.post('/accounts', (req, res) => {
+router.post('/accounts', requirePermission('accounts:manage'), (req, res) => {
   const { nama, npm, password } = req.body || {};
   if (!nama || !npm || !password)
     return res.status(400).json({ success: false, message: "Nama, NPM, dan Password wajib diisi." });
   try {
     const acc = Accounts.create({ nama, npm, password });
+    AuditService.logRequest(req, 'CREATE_ACCOUNT', 'Accounts', `Membuat akun mahasiswa baru: ${nama} (${npm})`);
     res.status(201).json({ success: true, data: acc });
   } catch(e) {
     if (e.message.includes('UNIQUE')) {
@@ -651,10 +753,16 @@ router.post('/accounts', (req, res) => {
 });
 
 // DELETE /api/accounts/:id
-router.delete('/accounts/:id', (req, res) => {
+router.delete('/accounts/:id', requirePermission('accounts:manage'), (req, res) => {
+  const accountId = Number(req.params.id);
   try {
-    const deleted = Accounts.delete(Number(req.params.id));
+    const acc = Accounts.getById(accountId);
+    if (!acc) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+    
+    const deleted = Accounts.delete(accountId);
     if (!deleted) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+    
+    AuditService.logRequest(req, 'DELETE_ACCOUNT', 'Accounts', `Menghapus akun mahasiswa: ${acc.nama} (${acc.npm})`);
     res.json({ success: true, message: 'Akun berhasil dihapus.' });
   } catch (e) {
     logger.error(`API Error: DELETE /accounts/${req.params.id} gagal`, e);
@@ -663,9 +771,16 @@ router.delete('/accounts/:id', (req, res) => {
 });
 
 // GET /api/accounts/:id/log
-router.get('/accounts/:id/log', (req, res) => {
+router.get('/accounts/:id/log', requirePermission('accounts:view'), (req, res) => {
+  const accountId = Number(req.params.id);
+  if (req.user.role === 'STUDENT') {
+    if (req.user.student_account_id !== accountId) {
+      return res.status(403).json({ success: false, message: 'Forbidden. Anda hanya dapat melihat data Anda sendiri.' });
+    }
+  }
+
   try {
-    res.json({ success: true, data: AbsenLog.getByAccount(Number(req.params.id)) });
+    res.json({ success: true, data: AbsenLog.getByAccount(accountId) });
   } catch (e) {
     logger.error(`API Error: GET /accounts/${req.params.id}/log gagal`, e);
     res.status(500).json({ success: false, message: 'Gagal mengambil log akun.' });
@@ -673,10 +788,12 @@ router.get('/accounts/:id/log', (req, res) => {
 });
 
 // POST /api/absen/all
-router.post('/absen/all', async (req, res) => {
+router.post('/absen/all', requirePermission('scheduler:run'), async (req, res) => {
   try {
     const accounts = Accounts.getAll();
     if (!accounts.length) return res.status(404).json({ success: false, message: 'Belum ada akun terdaftar.' });
+
+    AuditService.logRequest(req, 'RUN_ATTENDANCE', 'Attendance', 'Menjalankan absensi massal untuk semua mahasiswa');
 
     const jobs = accounts.map(async acc => {
       try {
@@ -702,12 +819,20 @@ router.post('/absen/all', async (req, res) => {
 });
 
 // POST /api/absen/:id
-router.post('/absen/:id', async (req, res) => {
+router.post('/absen/:id', requirePermission('scheduler:run'), async (req, res) => {
   const id = Number(req.params.id);
+  if (req.user.role === 'STUDENT') {
+    if (req.user.student_account_id !== id) {
+      return res.status(403).json({ success: false, message: 'Forbidden. Anda hanya dapat menjalankan absensi Anda sendiri.' });
+    }
+  }
+
   try {
     const account = Accounts.getById(id);
     if (!account) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
     if (runningJobs.has(id)) return res.status(409).json({ success: false, message: 'Proses absen sedang berjalan untuk akun ini.' });
+
+    AuditService.logRequest(req, 'RUN_ATTENDANCE', 'Attendance', `Menjalankan absensi manual untuk: ${account.nama} (${account.npm})`);
 
     runningJobs.add(id);
     try {
@@ -730,8 +855,17 @@ router.post('/absen/:id', async (req, res) => {
 });
 
 // GET /api/absen/log
-router.get('/absen/log', (req, res) => {
+router.get('/absen/log', requirePermission('accounts:view'), (req, res) => {
   try {
+    if (req.user.role === 'STUDENT') {
+      const logs = db.prepare(`
+        SELECT l.*, a.nama, a.npm FROM absen_log l
+        JOIN accounts a ON a.id = l.account_id
+        WHERE l.account_id = ?
+        ORDER BY l.absen_at DESC LIMIT 100
+      `).all(req.user.student_account_id);
+      return res.json({ success: true, data: logs });
+    }
     res.json({ success: true, data: AbsenLog.getRecent() });
   } catch (e) {
     logger.error('API Error: GET /absen/log gagal', e);
@@ -751,7 +885,7 @@ const SchedulerDB = require('../services/scheduler-db');
 const scheduler = require('../scheduler/manager');
 
 // GET /api/scheduler/status
-router.get('/scheduler/status', (req, res) => {
+router.get('/scheduler/status', requirePermission('scheduler:view'), (req, res) => {
   try {
     res.json({ success: true, data: scheduler.getHealthStatus() });
   } catch (e) {
@@ -761,8 +895,12 @@ router.get('/scheduler/status', (req, res) => {
 });
 
 // GET /api/scheduler/configs
-router.get('/scheduler/configs', (req, res) => {
+router.get('/scheduler/configs', requirePermission('scheduler:view'), (req, res) => {
   try {
+    if (req.user.role === 'STUDENT') {
+      const configs = SchedulerDB.getConfigs().filter(c => c.account_id === req.user.student_account_id);
+      return res.json({ success: true, data: configs });
+    }
     res.json({ success: true, data: SchedulerDB.getConfigs() });
   } catch (e) {
     logger.error('API Error: GET /scheduler/configs gagal', e);
@@ -771,7 +909,7 @@ router.get('/scheduler/configs', (req, res) => {
 });
 
 // POST /api/scheduler/configs
-router.post('/scheduler/configs', (req, res) => {
+router.post('/scheduler/configs', requirePermission('scheduler:manage'), (req, res) => {
   const { account_id, cron_pattern, timezone, is_enabled } = req.body || {};
   if (!account_id || !cron_pattern) {
     return res.status(400).json({ success: false, message: 'account_id dan cron_pattern wajib diisi.' });
@@ -781,6 +919,11 @@ router.post('/scheduler/configs', (req, res) => {
     const config = SchedulerDB.createConfig({ account_id: Number(account_id), cron_pattern, timezone, is_enabled: is_enabled !== undefined ? Number(is_enabled) : 1 });
     // Reload task di cron manager
     scheduler.reloadJob(config.id);
+    
+    // Log audit
+    const acc = Accounts.getById(Number(account_id));
+    AuditService.logRequest(req, 'UPDATE_SCHEDULER', 'Scheduler', `Membuat jadwal baru untuk NPM: ${acc ? acc.npm : account_id} (${cron_pattern})`);
+    
     res.status(201).json({ success: true, data: config });
   } catch (e) {
     logger.error('API Error: POST /scheduler/configs gagal', e);
@@ -789,7 +932,7 @@ router.post('/scheduler/configs', (req, res) => {
 });
 
 // PUT /api/scheduler/configs/:id
-router.put('/scheduler/configs/:id', (req, res) => {
+router.put('/scheduler/configs/:id', requirePermission('scheduler:manage'), (req, res) => {
   const id = Number(req.params.id);
   const { cron_pattern, timezone, is_enabled } = req.body || {};
 
@@ -801,6 +944,12 @@ router.put('/scheduler/configs/:id', (req, res) => {
     });
     // Reload task di cron manager
     scheduler.reloadJob(id);
+
+    // Log audit
+    const config = SchedulerDB.getConfigById(id);
+    const acc = config ? Accounts.getById(config.account_id) : null;
+    AuditService.logRequest(req, 'UPDATE_SCHEDULER', 'Scheduler', `Memperbarui jadwal ID ${id} untuk NPM: ${acc ? acc.npm : 'Unknown'} (${cron_pattern})`);
+
     res.json({ success: true, data: updated });
   } catch (e) {
     logger.error(`API Error: PUT /scheduler/configs/${id} gagal`, e);
@@ -809,13 +958,20 @@ router.put('/scheduler/configs/:id', (req, res) => {
 });
 
 // DELETE /api/scheduler/configs/:id
-router.delete('/scheduler/configs/:id', (req, res) => {
+router.delete('/scheduler/configs/:id', requirePermission('scheduler:manage'), (req, res) => {
   const id = Number(req.params.id);
   try {
+    const config = SchedulerDB.getConfigById(id);
+    const acc = config ? Accounts.getById(config.account_id) : null;
+
     // Unregister di cron manager
     scheduler.unregisterJob(id);
     const deleted = SchedulerDB.deleteConfig(id);
     if (!deleted) return res.status(404).json({ success: false, message: 'Konfigurasi tidak ditemukan.' });
+
+    // Log audit
+    AuditService.logRequest(req, 'UPDATE_SCHEDULER', 'Scheduler', `Menghapus jadwal ID ${id} untuk NPM: ${acc ? acc.npm : 'Unknown'}`);
+
     res.json({ success: true, message: 'Konfigurasi scheduler dihapus.' });
   } catch (e) {
     logger.error(`API Error: DELETE /scheduler/configs/${id} gagal`, e);
@@ -824,7 +980,7 @@ router.delete('/scheduler/configs/:id', (req, res) => {
 });
 
 // POST /api/scheduler/configs/:id/toggle
-router.post('/scheduler/configs/:id/toggle', (req, res) => {
+router.post('/scheduler/configs/:id/toggle', requirePermission('scheduler:manage'), (req, res) => {
   const id = Number(req.params.id);
   try {
     const current = SchedulerDB.getConfigById(id);
@@ -835,6 +991,10 @@ router.post('/scheduler/configs/:id/toggle', (req, res) => {
     
     // Reload task di cron manager
     scheduler.reloadJob(id);
+
+    // Log audit
+    const acc = Accounts.getById(current.account_id);
+    AuditService.logRequest(req, 'UPDATE_SCHEDULER', 'Scheduler', `${newStatus === 1 ? 'Mengaktifkan' : 'Menonaktifkan'} jadwal ID ${id} untuk NPM: ${acc ? acc.npm : 'Unknown'}`);
     
     res.json({ success: true, data: { id, is_enabled: newStatus } });
   } catch (e) {
@@ -844,7 +1004,7 @@ router.post('/scheduler/configs/:id/toggle', (req, res) => {
 });
 
 // GET /api/scheduler/history
-router.get('/scheduler/history', (req, res) => {
+router.get('/scheduler/history', requirePermission('scheduler:view'), (req, res) => {
   const limit = req.query.limit ? Number(req.query.limit) : 50;
   try {
     res.json({ success: true, data: SchedulerDB.getHistory(limit) });
@@ -859,7 +1019,7 @@ const MonitoringService = require('../services/monitoring');
 const BackupService = require('../services/backup');
 
 // GET /api/monitor/stats
-router.get('/monitor/stats', async (req, res) => {
+router.get('/monitor/stats', requirePermission('analytics:view'), async (req, res) => {
   try {
     const stats = await MonitoringService.getStats();
     res.json({ success: true, data: stats });
@@ -870,7 +1030,7 @@ router.get('/monitor/stats', async (req, res) => {
 });
 
 // GET /api/backups
-router.get('/backups', (req, res) => {
+router.get('/backups', requirePermission('accounts:manage'), (req, res) => {
   try {
     const list = BackupService.listBackups();
     res.json({ success: true, data: list });
@@ -881,9 +1041,10 @@ router.get('/backups', (req, res) => {
 });
 
 // POST /api/backups
-router.post('/backups', async (req, res) => {
+router.post('/backups', requirePermission('accounts:manage'), async (req, res) => {
   try {
     const filename = await BackupService.backupNow();
+    AuditService.logRequest(req, 'BACKUP', 'System DB', `Membuat berkas backup baru: ${filename}`);
     res.json({ success: true, message: `Backup berhasil dibuat: ${filename}`, filename });
   } catch (e) {
     logger.error('API Error: POST /backups gagal', e);
@@ -892,16 +1053,370 @@ router.post('/backups', async (req, res) => {
 });
 
 // POST /api/backups/restore
-router.post('/backups/restore', async (req, res) => {
+router.post('/backups/restore', requirePermission('accounts:manage'), async (req, res) => {
   const { filename } = req.body || {};
   if (!filename) {
     return res.status(400).json({ success: false, message: 'Nama berkas backup wajib dikirim.' });
   }
   try {
     await BackupService.restoreBackup(filename);
+    AuditService.logRequest(req, 'RESTORE', 'System DB', `Memulihkan database dari berkas backup: ${filename}`);
     res.json({ success: true, message: 'Database primer berhasil dipulihkan dari berkas cadangan.' });
   } catch (e) {
     logger.error(`API Error: POST /backups/restore untuk ${filename} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// ── Academic Calendar & Smart Rules APIs ────────────────────────────────────
+const CalendarService = require('../services/calendar');
+const RuleEngine = require('../services/rule-engine');
+
+// GET /api/calendar
+router.get('/calendar', requirePermission('calendar:view'), (req, res) => {
+  try {
+    const holidays = CalendarService.getHolidays();
+    const calendar = CalendarService.getAcademicCalendar();
+    res.json({ success: true, data: { holidays, calendar } });
+  } catch (e) {
+    logger.error('API Error: GET /calendar gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/calendar
+router.post('/calendar', requirePermission('calendar:manage'), (req, res) => {
+  const { holidays, calendar } = req.body || {};
+  if (!holidays || !calendar) {
+    return res.status(400).json({ success: false, message: 'Data holidays dan calendar wajib dikirim.' });
+  }
+  try {
+    CalendarService.saveHolidays(holidays);
+    CalendarService.saveAcademicCalendar(calendar);
+    AuditService.logRequest(req, 'CALENDAR_CHANGE', 'Academic Calendar', 'Memperbarui kalender akademik dan hari libur');
+    res.json({ success: true, message: 'Kalender akademik dan hari libur berhasil diperbarui.' });
+  } catch (e) {
+    logger.error('API Error: POST /calendar gagal', e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/rules/:accountId
+router.get('/rules/:accountId', requirePermission('rules:view'), (req, res) => {
+  const accountId = Number(req.params.accountId);
+  if (req.user.role === 'STUDENT') {
+    if (req.user.student_account_id !== accountId) {
+      return res.status(403).json({ success: false, message: 'Forbidden. Anda hanya dapat melihat aturan Anda sendiri.' });
+    }
+  }
+
+  try {
+    const rules = RuleEngine.getRulesByAccount(accountId);
+    const preview = RuleEngine.getPreview(accountId);
+    res.json({ success: true, data: { rules, preview } });
+  } catch (e) {
+    logger.error(`API Error: GET /rules/${accountId} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/rules/:accountId
+router.post('/rules/:accountId', requirePermission('rules:manage'), (req, res) => {
+  const accountId = Number(req.params.accountId);
+  if (req.user.role === 'STUDENT') {
+    if (req.user.student_account_id !== accountId) {
+      return res.status(403).json({ success: false, message: 'Forbidden. Anda hanya dapat memperbarui aturan Anda sendiri.' });
+    }
+  }
+
+  const { rules } = req.body || {};
+  if (!rules || !Array.isArray(rules)) {
+    return res.status(400).json({ success: false, message: 'Data rules wajib dikirim dalam bentuk array.' });
+  }
+  try {
+    RuleEngine.saveRules(accountId, rules);
+    
+    // Log audit
+    const acc = Accounts.getById(accountId);
+    AuditService.logRequest(req, 'RULE_CHANGE', 'Smart Rules', `Memperbarui aturan mingguan mahasiswa: ${acc ? acc.nama : accountId}`);
+    
+    res.json({ success: true, message: 'Aturan mingguan berhasil disimpan dan dikompilasi.' });
+  } catch (e) {
+    logger.error(`API Error: POST /rules/${accountId} gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/accounts/:id/toggle-active
+router.post('/accounts/:id/toggle-active', requirePermission('accounts:manage'), (req, res) => {
+  const id = Number(req.params.id);
+  const { is_active } = req.body || {};
+  if (is_active === undefined) {
+    return res.status(400).json({ success: false, message: 'Status is_active wajib dikirim.' });
+  }
+  try {
+    const success = Accounts.toggleActive(id, Number(is_active));
+    if (!success) {
+      return res.status(404).json({ success: false, message: 'Akun tidak ditemukan.' });
+    }
+    
+    // Pemicu kompilasi/reload ulang tugas scheduler untuk akun ini
+    try {
+      RuleEngine.compileRulesToConfigs(id);
+    } catch (err) {
+      scheduler.reloadAccountConfigs(id);
+    }
+
+    // Log audit
+    const acc = Accounts.getById(id);
+    AuditService.logRequest(req, 'UPDATE_SCHEDULER', 'Accounts', `${Number(is_active) === 1 ? 'Mengaktifkan' : 'Menonaktifkan'} akun mahasiswa: ${acc ? acc.nama : id}`);
+
+    res.json({ success: true, message: `Status keaktifan akun berhasil diperbarui.`, data: { id, is_active: Number(is_active) } });
+  } catch (e) {
+    logger.error(`API Error: POST /accounts/${id}/toggle-active gagal`, e);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// ── Analytics & Reporting API Routes ──────────────────────────────────────────
+const AnalyticsService = require('../services/analytics-service');
+
+// GET /api/analytics/overview
+router.get('/analytics/overview', requirePermission('analytics:view'), (req, res) => {
+  const result = AnalyticsService.getOverview();
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json(result);
+  }
+});
+
+// GET /api/analytics/trends
+router.get('/analytics/trends', requirePermission('analytics:view'), (req, res) => {
+  const days = parseInt(req.query.days || '7', 10);
+  const result = AnalyticsService.getTrends(days);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json(result);
+  }
+});
+
+// GET /api/analytics/failures
+router.get('/analytics/failures', requirePermission('analytics:view'), (req, res) => {
+  const result = AnalyticsService.getFailures();
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json(result);
+  }
+});
+
+// GET /api/analytics/scheduler
+router.get('/analytics/scheduler', requirePermission('analytics:view'), (req, res) => {
+  const result = AnalyticsService.getScheduler();
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json(result);
+  }
+});
+
+// GET /api/analytics/reports
+router.get('/analytics/reports', requirePermission('reports:view'), async (req, res) => {
+  const format = String(req.query.format || 'csv').toLowerCase();
+  const days = parseInt(req.query.days || '30', 10);
+  
+  const result = await AnalyticsService.exportReport(format, days);
+  if (result.success) {
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
+  } else {
+    res.status(500).json({ success: false, message: result.message });
+  }
+});
+
+// ── AI Insights & Recommendations API Routes ─────────────────────────────────
+const AIInsightsService = require('../services/ai-insights-service');
+
+// GET /api/ai-insights/overview
+router.get('/ai-insights/overview', requirePermission('ai_insights:view'), (req, res) => {
+  res.json(AIInsightsService.getOverview());
+});
+
+// GET /api/ai-insights/accounts
+router.get('/ai-insights/accounts', requirePermission('ai_insights:view'), (req, res) => {
+  res.json(AIInsightsService.getInsightsByCategory('accounts'));
+});
+
+// GET /api/ai-insights/scheduler
+router.get('/ai-insights/scheduler', requirePermission('ai_insights:view'), (req, res) => {
+  res.json(AIInsightsService.getInsightsByCategory('scheduler'));
+});
+
+// GET /api/ai-insights/system
+router.get('/ai-insights/system', requirePermission('ai_insights:view'), (req, res) => {
+  res.json(AIInsightsService.getInsightsByCategory('system'));
+});
+
+// GET /api/ai-insights/calendar
+router.get('/ai-insights/calendar', requirePermission('ai_insights:view'), (req, res) => {
+  res.json(AIInsightsService.getInsightsByCategory('calendar'));
+});
+
+// GET /api/ai-insights/reports
+router.get('/ai-insights/reports', requirePermission('reports:view'), (req, res) => {
+  const period = String(req.query.period || 'daily').toLowerCase();
+  const report = AIInsightsService.exportReport(period);
+  if (report.success) {
+    res.setHeader('Content-Type', report.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${report.filename}"`);
+    res.send(report.content);
+  } else {
+    res.status(500).json({ success: false, message: 'Gagal mengunduh laporan AI.' });
+  }
+});
+
+// POST /api/ai-insights/refresh
+router.post('/ai-insights/refresh', requirePermission('ai_insights:manage'), async (req, res) => {
+  const success = await AIInsightsService.updateCache();
+  if (success) {
+    res.json(AIInsightsService.getOverview());
+  } else {
+    res.status(500).json({ success: false, message: 'Gagal memperbarui analisis AI.' });
+  }
+});
+
+// ── Security Governance & User Management API Routes ──────────────────────────
+
+// GET /api/users - List all users (SUPER_ADMIN only)
+router.get('/users', requirePermission('users:manage'), (req, res) => {
+  const users = UserService.getUsers();
+  res.json({ success: true, data: users });
+});
+
+// POST /api/users - Create a user (SUPER_ADMIN only)
+router.post('/users', requirePermission('users:manage'), async (req, res) => {
+  const { username, email, password, role, studentAccountId } = req.body || {};
+  try {
+    const newUser = await UserService.createUser(username, email, password, role, studentAccountId);
+    AuditService.logRequest(req, 'CREATE_USER', 'User Management', `Membuat pengguna baru: ${username} (Role: ${role})`);
+    res.json({ success: true, data: newUser });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// PUT /api/users/:id - Update user metadata (SUPER_ADMIN only)
+router.put('/users/:id', requirePermission('users:manage'), async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const { username, email, role, status, studentAccountId } = req.body || {};
+  try {
+    await UserService.updateUser(userId, { username, email, role, status, studentAccountId });
+    AuditService.logRequest(req, 'UPDATE_USER', 'User Management', `Memperbarui info pengguna: ${username} (Role: ${role}, Status: ${status})`);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// DELETE /api/users/:id - Delete user (SUPER_ADMIN only)
+router.delete('/users/:id', requirePermission('users:manage'), async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  try {
+    const target = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+    if (target) {
+      await UserService.deleteUser(userId);
+      await SessionService.destroyAllUserSessions(userId); // Kick active sessions
+      AuditService.logRequest(req, 'DELETE_USER', 'User Management', `Menghapus pengguna: ${target.username}`);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/users/:id/reset-password - Reset password by Admin (SUPER_ADMIN only)
+router.post('/users/:id/reset-password', requirePermission('users:manage'), async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const { password } = req.body || {};
+  try {
+    const target = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+    if (!target) return res.status(404).json({ success: false, message: 'User tidak ditemukan.' });
+    
+    await UserService.resetPassword(userId, password);
+    AuditService.logRequest(req, 'RESET_PASSWORD', 'User Management', `Mereset password pengguna: ${target.username}`);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// POST /api/auth/change-password - Change own password (all logged-in users)
+router.post('/auth/change-password', (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  const userId = req.user.id;
+  try {
+    UserService.changePassword(userId, oldPassword, newPassword)
+      .then(() => {
+        AuditService.logRequest(req, 'CHANGE_PASSWORD', 'Security Center', 'Mengubah password pribadi');
+        res.json({ success: true, message: 'Password berhasil diubah.' });
+      })
+      .catch(e => {
+        res.status(400).json({ success: false, message: e.message });
+      });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/roles - List available roles (SUPER_ADMIN & ADMIN)
+router.get('/roles', requirePermission('profile:view'), (req, res) => {
+  res.json({ success: true, data: ['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'STUDENT'] });
+});
+
+// GET /api/permissions - View permission matrix (SUPER_ADMIN & ADMIN)
+router.get('/permissions', requirePermission('profile:view'), (req, res) => {
+  res.json({ success: true, data: RbacService.getPermissionMatrix() });
+});
+
+// GET /api/sessions - View active sessions (SUPER_ADMIN & ADMIN)
+router.get('/sessions', requirePermission('profile:view'), (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, message: 'Forbidden. Anda tidak memiliki akses ke manajemen sesi.' });
+  }
+  const sessions = SessionService.getActiveSessions();
+  res.json({ success: true, data: sessions });
+});
+
+// DELETE /api/sessions/:id - Revoke session / Force Logout (SUPER_ADMIN & ADMIN)
+router.delete('/sessions/:id', requirePermission('profile:view'), async (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, message: 'Forbidden. Anda tidak memiliki akses ke manajemen sesi.' });
+  }
+  const token = req.params.id;
+  try {
+    const sessionObj = db.prepare('SELECT s.user_id, u.username FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ?').get(token);
+    if (sessionObj) {
+      await SessionService.destroySession(token);
+      AuditService.logRequest(req, 'FORCE_LOGOUT', 'Security Center', `Memutus paksa sesi user: ${sessionObj.username}`);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/audit-logs - View audit trail logs (SUPER_ADMIN & ADMIN)
+router.get('/audit-logs', requirePermission('profile:view'), (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, message: 'Forbidden. Anda tidak memiliki akses ke log audit.' });
+  }
+  try {
+    const logs = db.prepare('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 500').all();
+    res.json({ success: true, data: logs });
+  } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }
 });
